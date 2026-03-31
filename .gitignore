@@ -34,6 +34,8 @@ Thumbs.db
 # Testing
 coverage/
 
+server/data/
+
 # Misc
 *.bak
 *.tmp

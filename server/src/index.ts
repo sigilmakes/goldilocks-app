@@ -9,6 +9,7 @@ import { CONFIG } from './config.js';
 import { runMigrations, closeDb } from './db.js';
 import authRoutes from './auth/routes.js';
 import conversationRoutes from './conversations/routes.js';
+import fileRoutes from './files/routes.js';
 import { setupWebSocket } from './agent/websocket.js';
 import { sessionCache } from './agent/sessions.js';
 
@@ -37,6 +38,9 @@ app.use('/api/auth', authRoutes);
 
 // Conversation routes
 app.use('/api/conversations', conversationRoutes);
+
+// File routes (nested under conversations)
+app.use('/api/conversations', fileRoutes);
 
 // Static file serving for frontend
 const frontendDist = resolve(process.cwd(), 'frontend', 'dist');
