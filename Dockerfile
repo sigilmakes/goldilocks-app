@@ -37,6 +37,10 @@ COPY --from=frontend-build /build/dist ./frontend/dist
 COPY skills/ ./skills/
 COPY AGENTS.md ./
 
+# Goldilocks CLI placeholder
+COPY bin/ ./bin/
+RUN chmod +x ./bin/goldilocks && ln -s /app/bin/goldilocks /usr/local/bin/goldilocks
+
 # Create data directories
 RUN mkdir -p /data/workspaces /models
 

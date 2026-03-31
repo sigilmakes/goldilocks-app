@@ -7,8 +7,12 @@ import {
   createCodingTools,
   type AgentSession,
 } from '@mariozechner/pi-coding-agent';
-import { mkdirSync, existsSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
+import { mkdirSync, existsSync, writeFileSync, symlinkSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const BIN_DIR = resolve(__dirname, '../../..', 'bin');
 import { CONFIG } from '../config.js';
 
 interface CachedSession {
@@ -68,6 +72,17 @@ class SessionCache {
     const agentsMdPath = resolve(workspacePath, 'AGENTS.md');
     if (!existsSync(agentsMdPath)) {
       writeFileSync(agentsMdPath, AGENTS_MD_CONTENT);
+    }
+
+    // Symlink goldilocks CLI into workspace for easy access
+    const goldilocksLink = resolve(workspacePath, 'goldilocks');
+    const goldilocksSource = resolve(BIN_DIR, 'goldilocks');
+    if (!existsSync(goldilocksLink) && existsSync(goldilocksSource)) {
+      try {
+        symlinkSync(goldilocksSource, goldilocksLink);
+      } catch {
+        // Ignore if symlink fails
+      }
     }
 
     // Set up auth storage with server API keys
@@ -187,7 +202,7 @@ Use these bash commands to work with crystal structures and generate inputs:
 ### K-Point Prediction
 \`\`\`bash
 # Predict optimal k-point spacing using ML
-goldilocks predict kpoints <structure.cif> --model ALIGNN --confidence 0.95 --json
+./goldilocks predict kpoints <structure.cif> --model ALIGNN --confidence 0.95 --json
 
 # Models: ALIGNN (more accurate), RF (faster)
 # Confidence: 0.95, 0.90, 0.85
@@ -196,7 +211,7 @@ goldilocks predict kpoints <structure.cif> --model ALIGNN --confidence 0.95 --js
 ### QE Input Generation
 \`\`\`bash
 # Generate complete SCF input file
-goldilocks generate scf <structure.cif> --functional PBEsol --pseudo efficiency --json
+./goldilocks generate scf <structure.cif> --functional PBEsol --pseudo efficiency --json
 
 # Functionals: PBEsol, PBE
 # Pseudo modes: efficiency, precision
@@ -205,7 +220,7 @@ goldilocks generate scf <structure.cif> --functional PBEsol --pseudo efficiency 
 ### Structure Search
 \`\`\`bash
 # Search crystal structure databases
-goldilocks search "<formula>" --database jarvis --limit 5 --json
+./goldilocks search "<formula>" --database jarvis --limit 5 --json
 
 # Databases: jarvis, mp (Materials Project), mc3d, oqmd
 \`\`\`
@@ -213,7 +228,7 @@ goldilocks search "<formula>" --database jarvis --limit 5 --json
 ### Structure Info
 \`\`\`bash
 # Analyze a structure file
-goldilocks info <structure.cif> --json
+./goldilocks info <structure.cif> --json
 \`\`\`
 
 ## Guidelines
