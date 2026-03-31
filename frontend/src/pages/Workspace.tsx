@@ -17,7 +17,7 @@ export default function Workspace() {
         contextOpen={contextOpen}
       />
       
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Sidebar */}
         <div
           className={`${
@@ -28,7 +28,7 @@ export default function Workspace() {
         </div>
 
         {/* Chat Panel */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <ChatPanel />
         </div>
 

@@ -27,9 +27,9 @@ export default function ChatPanel() {
   const hasMessages = messages.length > 0 || isStreaming;
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col min-h-0">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-4 min-h-0">
         {!activeConversationId ? (
           <div className="h-full flex items-center justify-center">
             <p className="text-slate-400">Select or create a conversation to start</p>
