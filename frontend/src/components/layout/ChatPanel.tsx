@@ -93,8 +93,14 @@ export default function ChatPanel() {
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder={isReady ? "Ask about DFT calculations or upload a structure..." : "Connecting..."}
-              disabled={!isReady}
+              placeholder={
+                !activeConversationId 
+                  ? "Create or select a conversation first..." 
+                  : isReady 
+                    ? "Ask about DFT calculations or upload a structure..." 
+                    : "Connecting..."
+              }
+              disabled={!isReady || !activeConversationId}
               className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent resize-none disabled:opacity-50"
               rows={1}
               onKeyDown={(e) => {
