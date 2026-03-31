@@ -2,6 +2,7 @@ import { Plus, MessageSquare, Folder, ChevronDown, Trash2, Loader2 } from 'lucid
 import { useState, useEffect } from 'react';
 import { useConversationsStore, type Conversation } from '../../store/conversations';
 import { useChatStore } from '../../store/chat';
+import { useFilesStore } from '../../store/files';
 
 export default function Sidebar() {
   const [libraryOpen, setLibraryOpen] = useState(true);
@@ -17,6 +18,7 @@ export default function Sidebar() {
   } = useConversationsStore();
   
   const clearMessages = useChatStore((s) => s.clearMessages);
+  const clearFiles = useFilesStore((s) => s.clear);
 
   // Fetch conversations on mount
   useEffect(() => {
@@ -25,8 +27,9 @@ export default function Sidebar() {
 
   const handleNewConversation = async () => {
     try {
-      await create();
       clearMessages();
+      clearFiles();
+      await create();
     } catch (err) {
       console.error('Failed to create conversation:', err);
     }
@@ -34,8 +37,9 @@ export default function Sidebar() {
 
   const handleSelectConversation = (id: string) => {
     if (id !== activeConversationId) {
-      setActive(id);
       clearMessages();
+      clearFiles();
+      setActive(id);
     }
   };
 
