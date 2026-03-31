@@ -1,5 +1,6 @@
-import { PanelLeft, PanelRight, User, LogOut, Settings } from 'lucide-react';
+import { PanelLeft, PanelRight, User, LogOut, Settings, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
+import { useModelsStore } from '../../store/models';
 import { useState, useRef, useEffect } from 'react';
 
 interface HeaderProps {
@@ -16,8 +17,14 @@ export default function Header({
   contextOpen,
 }: HeaderProps) {
   const { user, logout } = useAuthStore();
+  const { models, selectedModel, isLoading, fetch, setSelected } = useModelsStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Fetch models on mount
+  useEffect(() => {
+    fetch();
+  }, [fetch]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -28,6 +35,8 @@ export default function Header({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const selectedModelData = models.find(m => m.id === selectedModel);
 
   return (
     <header className="h-14 border-b border-slate-700 bg-slate-800 flex items-center justify-between px-4">
@@ -53,12 +62,35 @@ export default function Header({
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Model selector placeholder */}
-        <select className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500">
-          <option value="claude-sonnet">Claude 4 Sonnet</option>
-          <option value="claude-opus">Claude 4 Opus</option>
-          <option value="gpt-4o">GPT-4o</option>
-        </select>
+        {/* Model selector */}
+        {isLoading ? (
+          <div className="px-3 py-1.5 text-slate-400 flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-sm">Loading models...</span>
+          </div>
+        ) : models.length === 0 ? (
+          <div className="px-3 py-1.5 text-slate-500 text-sm">
+            No models available
+          </div>
+        ) : (
+          <select 
+            value={selectedModel ?? ''} 
+            onChange={(e) => setSelected(e.target.value)}
+            className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500 max-w-[200px]"
+          >
+            {models.map((model) => (
+              <option key={`${model.provider}-${model.id}`} value={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {selectedModelData?.supportsThinking && (
+          <span className="text-xs text-amber-500 bg-amber-500/10 px-2 py-1 rounded">
+            Thinking
+          </span>
+        )}
 
         <button
           onClick={onToggleContext}
