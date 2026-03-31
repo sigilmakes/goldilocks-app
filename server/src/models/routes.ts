@@ -8,42 +8,39 @@ const router = Router();
 // GET /api/models - List available models based on configured API keys
 router.get('/', verifyToken, async (_req: AuthRequest, res: Response) => {
   try {
-    // Set up auth storage with server API keys
+    // Set up auth storage - this reads from ~/.pi/agent/auth.json
     const authStorage = AuthStorage.create();
     
-    // Track which providers have keys
-    const providersWithKeys: Set<string> = new Set();
-    
+    // Add any server-configured keys as overrides
     if (CONFIG.anthropicApiKey) {
       authStorage.setRuntimeApiKey('anthropic', CONFIG.anthropicApiKey);
-      providersWithKeys.add('anthropic');
     }
     if (CONFIG.openaiApiKey) {
       authStorage.setRuntimeApiKey('openai', CONFIG.openaiApiKey);
-      providersWithKeys.add('openai');
     }
     if (CONFIG.googleApiKey) {
       authStorage.setRuntimeApiKey('google', CONFIG.googleApiKey);
-      providersWithKeys.add('google');
     }
 
     const modelRegistry = ModelRegistry.create(authStorage);
+    
+    // getAvailable() returns only models with valid API keys
     const available = await modelRegistry.getAvailable();
 
-    // Filter to only models from providers we have keys for
-    const models = available
-      .filter(m => providersWithKeys.has(m.provider))
-      .map(m => ({
-        id: m.id,
-        provider: m.provider,
-        name: m.name,
-        contextWindow: m.contextWindow,
-        supportsThinking: 'supportsThinking' in m ? (m as any).supportsThinking : false,
-      }));
+    const models = available.map(m => ({
+      id: m.id,
+      provider: m.provider,
+      name: m.name,
+      contextWindow: m.contextWindow,
+      supportsThinking: 'supportsThinking' in m ? (m as any).supportsThinking : false,
+    }));
+
+    // Get unique providers from available models
+    const providers = [...new Set(models.map(m => m.provider))];
 
     res.json({ 
       models,
-      providers: Array.from(providersWithKeys),
+      providers,
     });
   } catch (err) {
     console.error('Error fetching models:', err);
