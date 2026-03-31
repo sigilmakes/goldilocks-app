@@ -1,25 +1,80 @@
-import { Plus, MessageSquare, Folder, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { Plus, MessageSquare, Folder, ChevronDown, Trash2, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useConversationsStore, type Conversation } from '../../store/conversations';
+import { useChatStore } from '../../store/chat';
 
 export default function Sidebar() {
   const [libraryOpen, setLibraryOpen] = useState(true);
+  
+  const {
+    conversations,
+    activeConversationId,
+    isLoading,
+    fetch,
+    create,
+    remove,
+    setActive,
+  } = useConversationsStore();
+  
+  const clearMessages = useChatStore((s) => s.clearMessages);
 
-  // Placeholder data
-  const conversations = [
-    { id: '1', title: 'BaTiO3 SCF calculation', date: 'Today' },
-    { id: '2', title: 'Si band structure', date: 'Yesterday' },
-    { id: '3', title: 'Fe convergence test', date: 'Mar 28' },
-  ];
+  // Fetch conversations on mount
+  useEffect(() => {
+    fetch();
+  }, [fetch]);
 
+  const handleNewConversation = async () => {
+    try {
+      await create();
+      clearMessages();
+    } catch (err) {
+      console.error('Failed to create conversation:', err);
+    }
+  };
+
+  const handleSelectConversation = (id: string) => {
+    if (id !== activeConversationId) {
+      setActive(id);
+      clearMessages();
+    }
+  };
+
+  const handleDeleteConversation = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (confirm('Delete this conversation?')) {
+      try {
+        await remove(id);
+      } catch (err) {
+        console.error('Failed to delete conversation:', err);
+      }
+    }
+  };
+
+  // Placeholder library data
   const structures = [
     { id: '1', name: 'BaTiO3 perovskite', formula: 'BaTiO3' },
     { id: '2', name: 'Silicon diamond', formula: 'Si' },
   ];
 
+  const formatDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return `${days} days ago`;
+    return date.toLocaleDateString();
+  };
+
   return (
     <div className="h-full flex flex-col p-3">
       {/* New conversation button */}
-      <button className="flex items-center gap-2 w-full px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors mb-4">
+      <button
+        onClick={handleNewConversation}
+        className="flex items-center gap-2 w-full px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors mb-4"
+      >
         <Plus className="w-4 h-4" />
         New Conversation
       </button>
@@ -29,20 +84,29 @@ export default function Sidebar() {
         <div className="text-xs font-medium text-slate-400 uppercase tracking-wider px-3 mb-2">
           Conversations
         </div>
-        <div className="space-y-1">
-          {conversations.map((conv) => (
-            <button
-              key={conv.id}
-              className="w-full flex items-start gap-2 px-3 py-2 rounded-lg hover:bg-slate-700 transition-colors text-left group"
-            >
-              <MessageSquare className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-white truncate">{conv.title}</div>
-                <div className="text-xs text-slate-500">{conv.date}</div>
-              </div>
-            </button>
-          ))}
-        </div>
+        
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+          </div>
+        ) : conversations.length === 0 ? (
+          <div className="px-3 py-4 text-sm text-slate-500 text-center">
+            No conversations yet
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {conversations.map((conv) => (
+              <ConversationItem
+                key={conv.id}
+                conversation={conv}
+                isActive={conv.id === activeConversationId}
+                onSelect={() => handleSelectConversation(conv.id)}
+                onDelete={(e) => handleDeleteConversation(e, conv.id)}
+                formatDate={formatDate}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Divider */}
@@ -87,5 +151,41 @@ export default function Sidebar() {
         </div>
       </div>
     </div>
+  );
+}
+
+function ConversationItem({
+  conversation,
+  isActive,
+  onSelect,
+  onDelete,
+  formatDate,
+}: {
+  conversation: Conversation;
+  isActive: boolean;
+  onSelect: () => void;
+  onDelete: (e: React.MouseEvent) => void;
+  formatDate: (timestamp: number) => string;
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full flex items-start gap-2 px-3 py-2 rounded-lg transition-colors text-left group ${
+        isActive ? 'bg-slate-700' : 'hover:bg-slate-700/50'
+      }`}
+    >
+      <MessageSquare className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm text-white truncate">{conversation.title}</div>
+        <div className="text-xs text-slate-500">{formatDate(conversation.updatedAt)}</div>
+      </div>
+      <button
+        onClick={onDelete}
+        className="p-1 opacity-0 group-hover:opacity-100 hover:bg-slate-600 rounded transition-all"
+        title="Delete conversation"
+      >
+        <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400" />
+      </button>
+    </button>
   );
 }

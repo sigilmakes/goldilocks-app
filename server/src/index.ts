@@ -8,12 +8,16 @@ import { resolve } from 'path';
 import { CONFIG } from './config.js';
 import { runMigrations, closeDb } from './db.js';
 import authRoutes from './auth/routes.js';
+import conversationRoutes from './conversations/routes.js';
+import { setupWebSocket } from './agent/websocket.js';
+import { sessionCache } from './agent/sessions.js';
 
 const app = express();
 const server = createServer(app);
 
-// WebSocket server (will be used in Phase 2)
+// WebSocket server
 const wss = new WebSocketServer({ server, path: '/ws' });
+setupWebSocket(wss);
 
 // Middleware
 app.use(cors());
@@ -31,6 +35,9 @@ app.get('/api/health', (_req, res) => {
 // Auth routes
 app.use('/api/auth', authRoutes);
 
+// Conversation routes
+app.use('/api/conversations', conversationRoutes);
+
 // Static file serving for frontend
 const frontendDist = resolve(process.cwd(), 'frontend', 'dist');
 if (existsSync(frontendDist)) {
@@ -38,37 +45,17 @@ if (existsSync(frontendDist)) {
   
   // SPA fallback - serve index.html for all non-API routes
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) {
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) {
       return next();
     }
     res.sendFile(resolve(frontendDist, 'index.html'));
   });
 }
 
-// WebSocket handling (placeholder for Phase 2)
-wss.on('connection', (ws) => {
-  console.log('WebSocket client connected');
-  
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      console.log('WS message:', msg);
-      
-      // Placeholder response
-      ws.send(JSON.stringify({ type: 'ack', received: msg.type }));
-    } catch (err) {
-      console.error('Invalid WS message:', err);
-    }
-  });
-  
-  ws.on('close', () => {
-    console.log('WebSocket client disconnected');
-  });
-});
-
 // Graceful shutdown
 function shutdown() {
   console.log('\nShutting down...');
+  sessionCache.shutdown();
   closeDb();
   server.close(() => {
     console.log('Server closed');
