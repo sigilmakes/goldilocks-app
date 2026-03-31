@@ -1,0 +1,26 @@
+{
+  "name": "goldilocks-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React web app with embedded pi agent for DFT input file generation",
+  "workspaces": [
+    "server",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev:server": "npm run dev -w server",
+    "dev:frontend": "npm run dev -w frontend",
+    "build": "npm run build -w server && npm run build -w frontend",
+    "start": "npm run start -w server",
+    "lint": "npm run lint -w server && npm run lint -w frontend",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
