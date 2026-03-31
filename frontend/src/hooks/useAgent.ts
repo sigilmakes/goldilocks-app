@@ -21,19 +21,13 @@ export function useAgent(conversationId: string | null) {
   const [isConnected, setIsConnected] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Use refs to avoid stale closures and prevent effect re-runs
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
 
-  const {
-    addUserMessage,
-    startAssistantMessage,
-    appendTextDelta,
-    appendThinkingDelta,
-    startToolCall,
-    updateToolCall,
-    endToolCall,
-    endMessage,
-    endAgent,
-    clearMessages,
-  } = useChatStore();
+  // Get store actions once - they're stable
+  const chatStore = useChatStore();
 
   useEffect(() => {
     if (!conversationId || !token) {
@@ -43,7 +37,15 @@ export function useAgent(conversationId: string | null) {
     }
 
     // Clear messages when switching conversations
-    clearMessages();
+    chatStore.clearMessages();
+    setIsReady(false);
+    setError(null);
+
+    // Close existing connection
+    if (ws.current) {
+      ws.current.close();
+      ws.current = null;
+    }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -64,10 +66,13 @@ export function useAgent(conversationId: string | null) {
         return;
       }
 
+      // Get current store state for each message
+      const store = useChatStore.getState();
+
       switch (msg.type) {
         case 'auth_ok':
-          // Open the conversation
-          socket.send(JSON.stringify({ type: 'open', conversationId }));
+          // Open the conversation using ref to get current value
+          socket.send(JSON.stringify({ type: 'open', conversationId: conversationIdRef.current }));
           break;
 
         case 'auth_fail':
@@ -80,36 +85,36 @@ export function useAgent(conversationId: string | null) {
           break;
 
         case 'text_delta':
-          appendTextDelta(msg.delta);
+          store.appendTextDelta(msg.delta);
           break;
 
         case 'thinking_delta':
-          appendThinkingDelta(msg.delta);
+          store.appendThinkingDelta(msg.delta);
           break;
 
         case 'tool_start':
-          startToolCall(msg.toolCallId, msg.toolName, msg.args);
+          store.startToolCall(msg.toolCallId, msg.toolName, msg.args);
           break;
 
         case 'tool_update':
-          updateToolCall(msg.toolCallId, msg.content);
+          store.updateToolCall(msg.toolCallId, msg.content);
           break;
 
         case 'tool_end':
-          endToolCall(msg.toolCallId, msg.result, msg.isError);
+          store.endToolCall(msg.toolCallId, msg.result, msg.isError);
           break;
 
         case 'message_end':
-          endMessage();
+          store.endMessage();
           break;
 
         case 'agent_end':
-          endAgent();
+          store.endAgent();
           break;
 
         case 'error':
           setError(msg.error);
-          endAgent();
+          store.endAgent();
           break;
       }
     };
@@ -130,16 +135,17 @@ export function useAgent(conversationId: string | null) {
       socket.close();
       ws.current = null;
     };
-  }, [conversationId, token]);
+  }, [conversationId, token]); // Only re-run when these change
 
   const send = useCallback((text: string, files?: string[]) => {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !isReady) {
       return;
     }
-    addUserMessage(text, files);
-    startAssistantMessage();
+    const store = useChatStore.getState();
+    store.addUserMessage(text, files);
+    store.startAssistantMessage();
     ws.current.send(JSON.stringify({ type: 'prompt', text, files }));
-  }, [isReady, addUserMessage, startAssistantMessage]);
+  }, [isReady]);
 
   const abort = useCallback(() => {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {

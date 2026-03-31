@@ -113,14 +113,21 @@ class SessionCache {
       sessionManager = SessionManager.create(workspacePath, sessionPath);
     }
 
-    const { session } = await createAgentSession({
-      cwd: workspacePath,
-      sessionManager,
-      authStorage,
-      modelRegistry,
-      tools: createCodingTools(workspacePath),
-      resourceLoader: loader,
-    });
+    let session: AgentSession;
+    try {
+      const result = await createAgentSession({
+        cwd: workspacePath,
+        sessionManager,
+        authStorage,
+        modelRegistry,
+        tools: createCodingTools(workspacePath),
+        resourceLoader: loader,
+      });
+      session = result.session;
+    } catch (err) {
+      console.error('Failed to create agent session:', err);
+      throw new Error(`Failed to create agent session: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
 
     this.sessions.set(key, {
       session,
