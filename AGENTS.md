@@ -1,167 +1,326 @@
-# Goldilocks App
+# Goldilocks — Agent Guide
 
-You are an agent inside the Goldilocks web application. Users interact with you
-through a chat interface to generate Quantum ESPRESSO input files for DFT
-calculations.
+Goldilocks is a web application for generating Quantum ESPRESSO DFT input files
+with ML-predicted k-point grids. It pairs an AI chat assistant (powered by Pi SDK)
+with domain-specific ML models (ALIGNN, Random Forest) to help computational
+materials scientists set up DFT calculations through a conversational interface.
 
-## Your Tools
+## Running Dev
 
-- `predict_kpoints` — Predict optimal k-point spacing using ML models (ALIGNN or RF)
-- `generate_qe_input` — Generate a complete QE SCF input file
-- `search_structure` — Search crystal structure databases (Jarvis, MP, MC3D, OQMD)
-- Standard tools: `read`, `bash`, `write`, `edit` — operate on the conversation workspace
+```bash
+npm install          # installs both frontend + server workspaces
+npm run dev          # starts Vite (5173) + Express (3000) concurrently
+```
 
-## Workspace
+Vite proxies `/api` and `/ws` to port 3000. You need at least one LLM API key
+set as an env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY`).
 
-Your working directory is the conversation's workspace. Users upload structure
-files here. You write generated input files here. The workspace persists across
-messages in this conversation.
+Type checking (both workspaces): `npm run typecheck`
+Build: `npm run build`
+Smoke test: `npm run build && bash test/smoke-test.sh`
 
-## Guidelines
-
-- When a user uploads a structure, acknowledge it and offer to predict k-points
-  or generate an input file.
-- When predicting k-points, always report the confidence interval, not just
-  the median. Explain what the bounds mean.
-- When generating input files, explain the key parameters you chose and why.
-- If a prediction has a wide confidence interval (upper - lower > 0.1),
-  warn the user and suggest running a convergence test.
-- For metallic systems, use cold smearing. For insulators/semiconductors,
-  use Gaussian smearing.
-- Always use the SSSP pseudopotentials appropriate for the chosen functional.
-
----
-
-## Codebase Guide
-
-This section documents the codebase structure for developers working on the
-Goldilocks web application itself.
-
-### Repository Layout
+## Directory Structure
 
 ```
 goldilocks-app/
-├── frontend/          React 19 + Vite 6 + Tailwind 4 + Zustand 5
-├── server/            Express 5 + TypeScript + better-sqlite3
-├── skills/            Pi agent skill definitions
-├── deploy/            Docker + Kubernetes deployment configs
-├── test/              Smoke tests
-├── Dockerfile         Multi-stage production build
-└── package.json       npm workspace root (workspaces: server, frontend)
+├── frontend/                       React 19 + Vite 6 + Tailwind 4 + Zustand 5
+│   └── src/
+│       ├── api/client.ts           Typed fetch wrapper; auto-injects Bearer token from useAuthStore
+│       ├── components/
+│       │   ├── auth/               LoginForm
+│       │   ├── chat/               Extracted from ChatPanel — ToolCallCard, MarkdownContent,
+│       │   │                         MessageBubble, ThinkingBlock, WelcomeMessage
+│       │   ├── layout/             Top-level panels: Header, Sidebar, ChatPanel, ContextPanel
+│       │   ├── science/            Domain cards: KPointsResultCard, InputFileCard,
+│       │   │                         StructureViewer (3Dmol), PredictionSummary,
+│       │   │                         SearchDialog, StructureLibrary
+│       │   └── ui/                 Generic: Toast, Skeleton, ConnectionBanner, MermaidDiagram
+│       ├── hooks/
+│       │   ├── useAgent.ts         WebSocket lifecycle: auth → open → prompt → stream events to store
+│       │   └── useConnectionStatus.ts  Polls /api/health, exponential backoff, online/offline events
+│       ├── pages/                  Login, Workspace (main 3-panel layout), Settings, Docs
+│       ├── store/                  Zustand stores (see "State Management" below)
+│       ├── App.tsx                 React Router routes + ProtectedRoute wrapper
+│       └── main.tsx               Entry point + theme init
+│
+├── server/                         Express 5 + TypeScript + better-sqlite3
+│   └── src/
+│       ├── agent/
+│       │   ├── websocket.ts        WebSocket server: auth → open → prompt → stream Pi SDK events
+│       │   ├── sessions.ts         SessionCache wrapper — selects backend, returns AgentSession
+│       │   ├── session-backend.ts  SessionBackend interface + SessionHandle type
+│       │   ├── local-backend.ts    In-process Pi SDK sessions with LRU eviction (dev/single-user)
+│       │   ├── container-backend.ts Docker container per session (prod/multi-user)
+│       │   ├── pod-reaper.ts       Periodic cleanup of orphaned agent containers (>4h)
+│       │   └── workspace-guard.ts  resolve() + startsWith() path traversal prevention
+│       ├── auth/
+│       │   ├── routes.ts           POST register, login, refresh; GET me
+│       │   ├── middleware.ts       verifyToken (JWT), generateToken; AuthRequest type
+│       │   └── hash.ts            bcrypt password hashing
+│       ├── conversations/routes.ts GET list, POST create, GET/:id, PATCH/:id, DELETE/:id
+│       ├── files/routes.ts         Upload (base64 JSON), download, list, delete; per-conversation
+│       ├── models/routes.ts        GET available LLMs (Pi SDK ModelRegistry)
+│       ├── settings/routes.ts      User settings + encrypted API key CRUD
+│       ├── structures/routes.ts    Search/fetch from JARVIS/MP/MC3D/OQMD + library CRUD
+│       ├── quickgen/routes.ts      POST /api/predict, POST /api/generate (goldilocks CLI, no agent)
+│       ├── config.ts               Centralized typed env vars (CONFIG object)
+│       ├── crypto.ts               AES-256-GCM encrypt/decrypt for stored API keys
+│       ├── db.ts                   SQLite connection (WAL), auto-migration runner
+│       └── index.ts                Express app setup, route registration, WebSocket, static serving
+│
+├── shared/
+│   └── types.ts                    WebSocket message types (ClientMessage, ServerMessage) used by both
+│
+├── skills/goldilocks/SKILL.md      Pi agent skill definition (DFT domain knowledge)
+├── deploy/                         Docker + k8s deployment configs
+│   ├── docker/                     Dockerfiles for web, agent, MCP server
+│   └── k8s/                        Namespace, RBAC, network policies, pod templates, ingress
+├── test/smoke-test.sh              E2E test: starts server, registers user, hits all endpoints
+├── Dockerfile                      Multi-stage production build (single image: API + frontend)
+└── package.json                    npm workspace root
 ```
 
-### Key Files
+## Key Patterns
 
-| File | Purpose |
-|------|---------|
-| `server/src/index.ts` | Express app setup, route registration, WebSocket server, static file serving |
-| `server/src/config.ts` | Environment variable configuration (centralized, typed) |
-| `server/src/db.ts` | SQLite connection (WAL mode) + migration runner |
-| `server/src/crypto.ts` | AES-256-GCM encrypt/decrypt for stored API keys |
-| `server/src/agent/websocket.ts` | WebSocket protocol: auth → open → prompt → stream events |
-| `server/src/agent/sessions.ts` | Session cache with backend selection (local vs container) |
-| `server/src/agent/local-backend.ts` | In-process Pi SDK sessions with LRU eviction |
-| `server/src/agent/container-backend.ts` | Docker container per session (production isolation) |
-| `server/src/agent/workspace-guard.ts` | Path traversal prevention for file operations |
-| `frontend/src/hooks/useAgent.ts` | WebSocket client: auth, event dispatch to Zustand stores |
-| `frontend/src/store/chat.ts` | Chat message state: streaming deltas, tool calls, persistence |
-| `frontend/src/api/client.ts` | Typed HTTP client with automatic Bearer token injection |
-| `frontend/src/components/layout/ChatPanel.tsx` | Message rendering, tool result cards, markdown + mermaid |
+### Zustand Stores
 
-### How to Add a New API Route
+All frontend state lives in `frontend/src/store/`. Two patterns:
 
-1. Create `server/src/<domain>/routes.ts`
-2. Create a `Router`, apply `verifyToken` middleware
-3. Define your endpoints
-4. Register in `server/src/index.ts`:
+```ts
+// Ephemeral (fetched from API, not persisted):
+export const useFilesStore = create<FilesState>((set, get) => ({ ... }));
+
+// Persisted to localStorage:
+export const useAuthStore = create<AuthState>()(
+  persist((set, get) => ({ ... }), { name: 'goldilocks-auth', partialize: (s) => ({ token: s.token }) })
+);
+```
+
+Stores are accessed in components via selectors for minimal re-renders:
+`const token = useAuthStore((s) => s.token);`
+
+Actions are called directly: `useAuthStore.getState().login(email, password)`
+
+| Store | Persistence | Holds |
+|-------|-------------|-------|
+| `auth` | localStorage (token) | User, token, login/register/logout |
+| `chat` | localStorage (messages per conversation) | Messages, streaming deltas, active tool calls |
+| `conversations` | None (API) | Conversation list, active conversation ID |
+| `context` | None | Current structure info, DFT params, last prediction |
+| `files` | None (API) | Workspace file list for active conversation |
+| `models` | None (API) | Available LLM models, selected model |
+| `settings` | localStorage (theme) | Theme, API key metadata, user preferences |
+| `toast` | None | Notification queue (max 3, auto-dismiss 5s) |
+
+### Express Routes
+
+Every route file follows the same pattern:
+
+```ts
+// server/src/<domain>/routes.ts
+const router = Router();
+router.use(verifyToken);     // All routes require JWT
+router.get('/', (req: AuthRequest, res) => { ... });
+export default router;
+```
+
+Registered in `server/src/index.ts`: `app.use('/api/<path>', router)`
+
+The `AuthRequest` type extends Express `Request` with `user?: { id, email }`.
+
+### WebSocket Protocol
+
+Defined in `shared/types.ts`, implemented in `server/src/agent/websocket.ts` (server)
+and `frontend/src/hooks/useAgent.ts` (client).
+
+```
+Client                          Server
+  │                               │
+  ├── { type: 'auth', token } ──→ │  JWT verify
+  │ ←── { type: 'auth_ok' } ─────┤
+  │                               │
+  ├── { type: 'open', convId } ──→│  sessionCache.getOrCreate()
+  │ ←── { type: 'ready' } ───────┤
+  │                               │
+  ├── { type: 'prompt', text } ──→│  session.prompt(text)
+  │ ←── thinking_delta* ─────────┤  Pi SDK events mapped to WS messages
+  │ ←── text_delta* ─────────────┤
+  │ ←── tool_start ──────────────┤
+  │ ←── tool_update* ────────────┤
+  │ ←── tool_end ─────────────────┤
+  │ ←── message_end ──────────────┤  (may loop: more text_delta/tool cycles)
+  │ ←── agent_end ────────────────┤  Agent done, ready for next prompt
+  │                               │
+  ├── { type: 'abort' } ────────→ │  session.abort()
+```
+
+One prompt at a time. `isProcessing` flag prevents concurrent prompts.
+Opening a new conversation on the same WS cleanly tears down the previous session subscription.
+The `useAgent` hook uses a generation counter to discard events from stale connections after rapid conversation switches.
+
+### SessionBackend Abstraction
+
+`server/src/agent/session-backend.ts` defines the interface:
+
+```ts
+interface SessionBackend {
+  getOrCreate(userId, conversationId): Promise<SessionHandle>;
+  touch(userId, conversationId): void;    // Reset idle timeout
+  dispose(userId, conversationId): void;  // Tear down session
+  shutdown(): void;                       // Clean up all (server exit)
+}
+```
+
+**LocalSessionBackend** (`local-backend.ts`): Runs Pi SDK in-process.
+Creates workspace at `WORKSPACE_ROOT/<userId>/<conversationId>/workspace/`.
+Writes `AGENTS.md` + symlinks `goldilocks` CLI into each workspace.
+LRU cache with `MAX_SESSIONS` limit, idle eviction every 60s.
+Loads user's encrypted API keys from DB, decrypts, sets on AuthStorage.
+
+**ContainerSessionBackend** (`container-backend.ts`): Spawns Docker container per session.
+Port range 9000–9999. Containers run with `--read-only --memory 512m --cpus 0.5 --cap-drop ALL`.
+Creates a proxy AgentSession that forwards WS messages to the container.
+PodReaper (`pod-reaper.ts`) kills orphaned containers >4h old.
+
+Selected by `SESSION_BACKEND` env var in `sessions.ts`.
+
+## How To: Add a New API Route
+
+1. Create `server/src/<domain>/routes.ts`:
+   ```ts
+   import { Router, Response } from 'express';
+   import { verifyToken, AuthRequest } from '../auth/middleware.js';
+
+   const router = Router();
+   router.use(verifyToken);
+
+   router.get('/', (req: AuthRequest, res: Response) => {
+     const userId = req.user!.id;
+     res.json({ data: [] });
+   });
+
+   export default router;
+   ```
+
+2. Register in `server/src/index.ts`:
    ```ts
    import myRoutes from './<domain>/routes.js';
    app.use('/api/<path>', myRoutes);
    ```
-5. Add corresponding API calls in `frontend/src/api/client.ts` or use `api.get/post/etc.` directly from stores
 
-### How to Add a New Frontend Component
+3. Call from frontend using `api` client (`frontend/src/api/client.ts`):
+   ```ts
+   import { api } from '../api/client';
+   const data = await api.get<MyType>('/my-endpoint');
+   ```
 
-1. Place it in the appropriate `frontend/src/components/` subdirectory:
-   - `auth/` — Authentication-related (LoginForm)
-   - `layout/` — Top-level layout panels (Header, Sidebar, ChatPanel, ContextPanel)
-   - `science/` — Domain-specific cards and visualizations
-   - `ui/` — Reusable generic UI (Toast, Skeleton, ConnectionBanner)
-2. If it needs shared state, create a Zustand store in `frontend/src/store/`
-3. For API data, use the `api` client: `import { api } from '../api/client'`
+## How To: Add a New Tool Result Card in Chat
 
-### How to Add a New Tool Result Card in Chat
+When the agent calls `bash` with a `goldilocks` CLI command, the `ToolCallCard`
+component (`frontend/src/components/chat/ToolCallCard.tsx`) checks
+`getGoldilocksCommand(tool.args)` and renders specialized cards.
 
-The `ChatPanel.tsx` renders specialized cards when the agent calls `bash` with
-recognized `goldilocks` CLI commands. To add a new card type:
+1. Create `frontend/src/components/science/YourCard.tsx`
 
-1. Create a card component in `frontend/src/components/science/YourCard.tsx`
-2. In `ChatPanel.tsx`, find the `ToolCallCard` function
-3. Add a new case that checks `getGoldilocksCommand(tool.args)`:
+2. In `ToolCallCard.tsx`, add a case in the existing `if (tool.toolName === 'bash' && ...)` block:
    ```tsx
    if (cmd === 'yourcommand') {
      const parsed = parseYourResult(tool.result);
      if (parsed) return <YourCard data={parsed} />;
    }
    ```
-4. Write a parser function that extracts structured data from the CLI output
 
-Currently recognized commands: `predict`, `generate`, `search`.
+3. Write a `parseYourResult()` function that extracts structured data from CLI JSON output.
 
-### Common Patterns
+Currently recognized commands: `predict` → KPointsResultCard, `generate` → InputFileCard, `search` → inline table.
 
-**Zustand stores** — All frontend state lives in `frontend/src/store/`. Stores use:
-- `create()` for ephemeral state (chat, context, files, models, toast)
-- `create()(persist(...))` for persisted state (auth token, theme settings)
-- Actions are defined inside the store, called directly: `useAuthStore.getState().login(...)`
-- Selectors with `useStore((s) => s.field)` for minimal re-renders
+## How To: Add a New Zustand Store
 
-**Express routes** — All route files follow the same pattern:
+1. Create `frontend/src/store/mystore.ts`:
+   ```ts
+   import { create } from 'zustand';
+
+   interface MyState {
+     items: Item[];
+     fetch: () => Promise<void>;
+   }
+
+   export const useMyStore = create<MyState>((set) => ({
+     items: [],
+     fetch: async () => {
+       const { items } = await api.get<{ items: Item[] }>('/my-items');
+       set({ items });
+     },
+   }));
+   ```
+
+2. Use in components: `const items = useMyStore((s) => s.items);`
+
+3. For persistence, wrap with `persist()`:
+   ```ts
+   export const useMyStore = create<MyState>()(
+     persist((set) => ({ ... }), { name: 'goldilocks-my-store' })
+   );
+   ```
+
+## Testing
+
+**Smoke test** (`test/smoke-test.sh`): Starts the server on a temp port with a
+temp data directory, registers a user, creates a conversation, uploads a file,
+hits all REST endpoints, and verifies responses. Requires a built server
+(`npm run build` first). Does NOT test WebSocket/agent — only HTTP API surface.
+
+**Type checking**: `npm run typecheck` runs `tsc --noEmit` on both workspaces.
+Both have `strict: true`, `noUnusedLocals: true`, `noUnusedParameters: true`.
+
+**No unit test framework** is set up. The smoke test + TypeScript strict mode
+are the current safety nets.
+
+## Known Quirks and Gotchas
+
+### 3Dmol.js Import
+
+`frontend/src/components/science/StructureViewer.tsx` imports 3Dmol.js with
+`import * as $3Dmol from '3dmol'`. The `$` prefix is required because 3Dmol
+attaches to the global `$3Dmol` variable. The Vite config may need special
+handling for this module's side effects.
+
+### Express 5 Catch-All Syntax
+
+Express 5 requires named parameters for catch-all routes. In `server/src/index.ts`:
 ```ts
-const router = Router();
-router.use(verifyToken);  // All routes authenticated
-// ...endpoints...
-export default router;
+// Express 4: app.get('*', handler)
+// Express 5: app.get('/{*splat}', handler)
+app.get('/{*splat}', (req, res, next) => { ... });
 ```
 
-**WebSocket protocol** — Client sends JSON messages:
-1. `{ type: 'auth', token }` → server responds `auth_ok` or `auth_fail`
-2. `{ type: 'open', conversationId }` → server creates/resumes session, responds `ready`
-3. `{ type: 'prompt', text }` → server streams `text_delta`, `thinking_delta`, `tool_start`, `tool_update`, `tool_end`, `message_end`, `agent_end`
-4. `{ type: 'abort' }` → server aborts current generation
+### localStorage Chat Persistence
 
-**File uploads** — Files are sent as JSON with base64-encoded content (not multipart).
-The backend validates extensions, prevents path traversal, and stores files in
-`WORKSPACE_ROOT/<userId>/<conversationId>/workspace/`.
+Chat messages are stored in `localStorage` keyed by conversation ID, NOT in the
+server database. The `conversations` table only stores metadata (title, model,
+timestamps). Clearing browser data loses all message history. Large tool results
+are truncated to 2KB before storage to avoid quota issues. Max 50 conversations
+stored; oldest are pruned on save.
 
-**API key management** — User API keys are encrypted with AES-256-GCM before storage
-in SQLite. Server-wide keys from environment variables take precedence. The Pi SDK
-`AuthStorage` + `ModelRegistry` handle model availability based on configured keys.
+### File Upload Format
 
-### Database Schema
+Files are uploaded as JSON with base64-encoded content (`{ filename, content }`),
+NOT as multipart/form-data. This is handled in `server/src/files/routes.ts`.
+Max 10MB per file. Allowed extensions are restricted.
 
-SQLite with WAL mode. Four tables:
-- `users` — id, email, password_hash, display_name, settings (JSON), created_at
-- `api_keys` — user_id, provider, encrypted_key, created_at (composite PK)
-- `conversations` — id, user_id, title, model, provider, timestamps
-- `structure_library` — id, user_id, name, formula, source, file_path, metadata (JSON)
+### WebSocket Generation Counter
 
-Migrations live in `server/src/migrations/` as numbered `.sql` files, applied
-automatically on server start.
+In `useAgent.ts`, a `generationRef` counter prevents stale WebSocket messages
+from being dispatched to the store when the user rapidly switches between
+conversations. Each `useEffect` run increments the counter; incoming messages
+check their generation matches the current one.
 
-### Testing
+### Rate Limiting
 
-- **Smoke test**: `bash test/smoke-test.sh` — Starts the server, registers a user,
-  creates a conversation, uploads a file, hits all API endpoints, and cleans up.
-  Requires the server to be built first (`npm run build`).
-- **Type checking**: `npm run typecheck` — Runs `tsc --noEmit` on both workspaces.
-- **Linting**: `npm run lint` — ESLint on both workspaces.
-- No unit test framework is set up yet. The smoke test covers the API surface.
+`server/src/index.ts` applies `express-rate-limit`: 60 req/min in production
+(300 in dev) globally, and 20 req/15min on auth endpoints.
 
-### Environment
+### CORS
 
-- Node.js ≥ 20, npm ≥ 10
-- `npm install` at root installs both workspaces
-- `npm run dev` starts both frontend (Vite HMR on :5173) and backend (tsx watch on :3000)
-- `npm run build` compiles both for production
-- See `.env.example` for all environment variables
+Permissive in development (`cors()` with no options). In production, restricted
+to `CORS_ORIGIN` env var.
