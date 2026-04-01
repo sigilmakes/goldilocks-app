@@ -41,6 +41,19 @@ kubectl get pods -n goldilocks    # Check agent pods
 npm run k8s:teardown              # Delete kind cluster
 ```
 
+### Dev Scripts
+
+| Script | File | Purpose |
+|--------|------|---------||
+| `npm run k8s:setup` | `deploy/setup-dev.sh` | Creates kind cluster, builds agent image, loads it into kind, applies base k8s manifests |
+| `npm run k8s:teardown` | `deploy/teardown-dev.sh` | Deletes the kind cluster and all its contents |
+| `npm run k8s:build-agent` | (inline in `package.json`) | Rebuilds agent Docker image and reloads it into kind |
+
+Prerequisites for local dev: `docker`, `kind`, `kubectl`.
+
+The kind cluster is configured via `deploy/kind-config.yaml` (single control-plane
+node with port 30000 mapped to host port 3000).
+
 ## Kubernetes (Production)
 
 ```mermaid
@@ -67,7 +80,7 @@ graph LR
 
 ### Kubernetes Manifests
 
-All in `deploy/k8s/`:
+All in `k8s/` (top-level, promoted from `deploy/k8s/`):
 
 | Manifest | Purpose |
 |----------|---------|
@@ -78,6 +91,7 @@ All in `deploy/k8s/`:
 | `web-app.yaml` | Web app Deployment + Service + PVC |
 | `mcp-server.yaml` | MCP server Deployment + Service |
 | `agent-pod-template.yaml` | Reference spec for ephemeral agent pods |
+| `workspace-pvc-template.yaml` | Per-user workspace PVC template |
 | `ingress.yaml` | Ingress with TLS |
 | `secrets.yaml` | Secret templates for JWT_SECRET, ENCRYPTION_KEY, API keys |
 
