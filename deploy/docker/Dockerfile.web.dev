@@ -1,0 +1,23 @@
+# Dev-mode web app: tsx watch (Express) + vite dev server (React)
+# Used by Tilt with live_update for sub-second file syncs.
+
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Install deps (including devDependencies)
+COPY package.json package-lock.json ./
+COPY server/package.json ./server/
+COPY frontend/package.json ./frontend/
+RUN npm install
+
+# Copy source (overridden by Tilt live_update on changes)
+COPY . .
+
+# Express (3000) + Vite (5173)
+EXPOSE 3000 5173
+
+# Run both dev servers concurrently
+# --host 0.0.0.0 on Vite is critical — without it, Vite only binds
+# localhost inside the container and is unreachable from outside.
+CMD ["npm", "run", "dev:both"]
