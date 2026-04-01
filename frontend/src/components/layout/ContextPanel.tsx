@@ -45,7 +45,7 @@ export default function ContextPanel() {
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'structure' && <StructureTab conversationId={activeConversationId} />}
-        {activeTab === 'parameters' && <ParametersTab />}
+        {activeTab === 'parameters' && <ParametersTab conversationId={activeConversationId} />}
         {activeTab === 'files' && <FilesTab conversationId={activeConversationId} />}
       </div>
     </div>
@@ -123,7 +123,7 @@ function StructureTab({ conversationId }: { conversationId: string | null }) {
   );
 }
 
-function ParametersTab() {
+function ParametersTab({ conversationId }: { conversationId: string | null }) {
   const {
     functional, pseudoMode, mlModel, confidence, structure,
     setFunctional, setPseudoMode, setMlModel, setConfidence, setPrediction,
@@ -135,7 +135,8 @@ function ParametersTab() {
     setIsGenerating(true);
     try {
       const predictRes = await api.post<{ prediction: unknown }>('/predict', {
-        filePath: structure.filePath,
+        structurePath: structure.filePath,
+        conversationId,
         model: mlModel,
         confidence,
       });
@@ -143,11 +144,10 @@ function ParametersTab() {
         setPrediction(predictRes.prediction as import('../../store/context').PredictionResult);
       }
       await api.post('/generate', {
-        filePath: structure.filePath,
+        structurePath: structure.filePath,
+        conversationId,
         functional,
         pseudoMode,
-        model: mlModel,
-        confidence,
       });
     } catch (err) {
       console.error('Quick generate failed:', err);
@@ -376,14 +376,26 @@ function FileItem({
         <div className="text-sm text-slate-200 truncate">{file.name}</div>
         <div className="text-xs text-slate-500">{formatSize(file.size)}</div>
       </div>
-      <a
-        href={`/api/conversations/${conversationId}/files/${file.name}`}
-        download
+      <button
+        onClick={async () => {
+          const token = useAuthStore.getState().token;
+          const res = await fetch(`/api/conversations/${conversationId}/files/${file.name}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+          if (!res.ok) return;
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = file.name;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}
         className="p-1 opacity-0 group-hover:opacity-100 hover:bg-slate-600 rounded transition-all"
         title="Download"
       >
         <Download className="w-4 h-4 text-slate-400" />
-      </a>
+      </button>
       <button
         onClick={onDelete}
         className="p-1 opacity-0 group-hover:opacity-100 hover:bg-slate-600 rounded transition-all"

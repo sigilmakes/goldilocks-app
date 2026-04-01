@@ -35,7 +35,7 @@ interface SettingsResponse {
 }
 
 interface ApiKeysResponse {
-  keys: ApiKeyInfo[];
+  apiKeys: ApiKeyInfo[];
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -96,7 +96,7 @@ export const useSettingsStore = create<SettingsState>()(
           await api.put('/settings/api-key', { provider, key });
           // Refresh API keys after adding
           const res = await api.get<ApiKeysResponse>('/settings/api-keys');
-          set({ apiKeys: res.keys, isLoading: false });
+          set({ apiKeys: res.apiKeys, isLoading: false });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Failed to add API key';
           set({ error: message, isLoading: false });
@@ -125,7 +125,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ isLoading: true, error: null });
         try {
           const res = await api.get<ApiKeysResponse>('/settings/api-keys');
-          set({ apiKeys: res.keys, isLoading: false });
+          set({ apiKeys: res.apiKeys, isLoading: false });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Failed to fetch API keys';
           set({ error: message, isLoading: false });

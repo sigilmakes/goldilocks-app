@@ -1,7 +1,11 @@
 import { Router, Response } from 'express';
 import { v4 as uuid } from 'uuid';
+import { rmSync, existsSync } from 'fs';
+import { resolve } from 'path';
 import { getDb } from '../db.js';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
+import { CONFIG } from '../config.js';
+import { sessionCache } from '../agent/sessions.js';
 
 const router = Router();
 
@@ -158,7 +162,20 @@ router.delete('/:id', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // TODO: Clean up workspace files
+  // Clean up workspace files and dispose agent session (§5.14)
+  const convId = req.params.id as string;
+  try {
+    sessionCache.dispose(req.user.id, convId);
+  } catch { /* session may not exist */ }
+
+  const workspaceDir = resolve(CONFIG.workspaceRoot, req.user.id, convId);
+  if (existsSync(workspaceDir)) {
+    try {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    } catch (err) {
+      console.error('Failed to clean up workspace:', err);
+    }
+  }
 
   res.json({ ok: true });
 });

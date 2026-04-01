@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 
+import rateLimit from 'express-rate-limit';
 import { CONFIG } from './config.js';
 import { runMigrations, closeDb } from './db.js';
 import authRoutes from './auth/routes.js';
@@ -25,8 +26,29 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 setupWebSocket(wss);
 
 // Middleware
-app.use(cors());
+app.use(cors(CONFIG.isProd ? {
+  origin: process.env.CORS_ORIGIN ?? false,
+  credentials: true,
+} : {}));
 app.use(express.json());
+
+// Rate limiting (§5.9)
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: CONFIG.isProd ? 60 : 300, // tighter in production
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+app.use('/api', limiter);
+
+// Stricter limit on auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  message: { error: 'Too many auth attempts, please try again later' },
+});
+app.use('/api/auth', authLimiter);
 
 // Health check
 app.get('/api/health', (_req, res) => {

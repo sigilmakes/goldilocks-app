@@ -25,6 +25,13 @@ router.post('/register', async (req: Request<{}, {}, RegisterBody>, res: Respons
     res.status(400).json({ error: 'Email and password are required' });
     return;
   }
+
+  // Basic email format validation (§5.13)
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    res.status(400).json({ error: 'Invalid email format' });
+    return;
+  }
   
   if (password.length < 8) {
     res.status(400).json({ error: 'Password must be at least 8 characters' });

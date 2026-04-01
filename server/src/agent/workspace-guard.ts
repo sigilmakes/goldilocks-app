@@ -1,13 +1,15 @@
 import { resolve } from 'path';
+import { realpathSync, existsSync } from 'fs';
 
 /**
  * Validate that a requested path stays within the user's workspace base directory.
  *
- * Returns the resolved absolute path if valid. Throws if path traversal is detected.
+ * Uses realpathSync to resolve symlinks before checking the prefix, preventing
+ * symlink-based path traversal attacks (§4.6).
  *
- * LIMITATION: This is a convention-based check, not a sandbox. A determined user
- * with agent access could still escape via symlinks or other mechanisms. Real
- * sandboxing requires containers (P6D).
+ * LIMITATION: This prevents symlink escapes for files that exist, but a
+ * determined user with agent access could still escape via other mechanisms.
+ * Real sandboxing requires containers (P6D).
  *
  * @param basePath - The absolute base workspace path for the user/conversation.
  * @param requestedPath - The path requested (may be relative).
@@ -16,8 +18,20 @@ import { resolve } from 'path';
  */
 export function validateWorkspacePath(basePath: string, requestedPath: string): string {
   const resolved = resolve(basePath, requestedPath);
+
+  // First check: resolved path must start with basePath (catches ../ traversal)
   if (!resolved.startsWith(basePath)) {
     throw new Error('Path traversal detected');
   }
+
+  // Second check: if the file exists, resolve symlinks and verify again
+  if (existsSync(resolved)) {
+    const realPath = realpathSync(resolved);
+    const realBase = realpathSync(basePath);
+    if (!realPath.startsWith(realBase)) {
+      throw new Error('Symlink path traversal detected');
+    }
+  }
+
   return resolved;
 }

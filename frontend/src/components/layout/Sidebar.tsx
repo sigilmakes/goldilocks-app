@@ -64,11 +64,7 @@ export default function Sidebar() {
     }
   };
 
-  // Placeholder library data
-  const structures = [
-    { id: '1', name: 'BaTiO3 perovskite', formula: 'BaTiO3' },
-    { id: '2', name: 'Silicon diamond', formula: 'Si' },
-  ];
+  const structures: Array<{ id: string; name: string; formula: string }> = [];
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -141,17 +137,21 @@ export default function Sidebar() {
         
         {libraryOpen && (
           <div className="mt-1 space-y-1 pl-2">
-            {structures.map((struct) => (
-              <button
-                key={struct.id}
-                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-700 transition-colors text-left"
-              >
-                <div className="w-2 h-2 bg-amber-500 rounded-full" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-slate-300 truncate">{struct.name}</div>
-                </div>
-              </button>
-            ))}
+            {structures.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-slate-500">No saved structures</div>
+            ) : (
+              structures.map((struct) => (
+                <button
+                  key={struct.id}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-700 transition-colors text-left"
+                >
+                  <div className="w-2 h-2 bg-amber-500 rounded-full" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-slate-300 truncate">{struct.name}</div>
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         )}
       </div>

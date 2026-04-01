@@ -112,6 +112,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
       unsubscribe: null,
       isProcessing: false,
     };
+    let activePrompt: Promise<void> | null = null;
 
     const cleanup = () => {
       if (state.unsubscribe) {
@@ -190,12 +191,15 @@ export function setupWebSocket(wss: WebSocketServer): void {
             try {
               state.isProcessing = true;
               sessionCache.touch(state.user.id, state.conversationId);
-              await state.session.prompt(msg.text);
+              const promptPromise = state.session.prompt(msg.text);
+              activePrompt = promptPromise;
+              await promptPromise;
             } catch (err) {
               console.error('Prompt error:', err);
               const errorMsg = err instanceof Error ? err.message : 'Failed to process prompt';
               send(ws, { type: 'error', error: errorMsg });
             } finally {
+              activePrompt = null;
               state.isProcessing = false;
             }
             break;
@@ -205,6 +209,10 @@ export function setupWebSocket(wss: WebSocketServer): void {
             if (state.session && state.isProcessing) {
               try {
                 await state.session.abort();
+                // Wait for the active prompt to finish before allowing new ones (§4.2)
+                if (activePrompt) {
+                  await activePrompt.catch(() => {});
+                }
               } catch (err) {
                 console.error('Abort error:', err);
               }

@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Paperclip, Sparkles, Square, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useChatStore, type ChatMessage, type AssistantBlock, type ToolCall } from '../../store/chat';
 import { useConversationsStore } from '../../store/conversations';
+import { useAuthStore } from '../../store/auth';
+import { useFilesStore } from '../../store/files';
 import { useAgent } from '../../hooks/useAgent';
 import { useContextStore, type PredictionResult } from '../../store/context';
 import KPointsResultCard from '../science/KPointsResultCard';
@@ -24,7 +26,7 @@ export default function ChatPanel() {
 
   const handleFileAttach = useCallback(async (files: FileList | null) => {
     if (!files || !activeConversationId) return;
-    const token = (await import('../../store/auth')).useAuthStore.getState().token;
+    const token = useAuthStore.getState().token;
     for (const file of Array.from(files)) {
       try {
         // Read as base64 and upload
@@ -49,7 +51,7 @@ export default function ChatPanel() {
       }
     }
     // Refresh files list
-    const filesStore = (await import('../../store/files')).useFilesStore.getState();
+    const filesStore = useFilesStore.getState();
     filesStore.fetch(activeConversationId);
   }, [activeConversationId, send]);
 
@@ -80,11 +82,11 @@ export default function ChatPanel() {
             <ChatSkeleton />
           </div>
         ) : !hasMessages ? (
-          <WelcomeMessage />
+          <WelcomeMessage onSend={send} isReady={isReady} />
         ) : (
           <div className="space-y-4 max-w-3xl mx-auto">
             {messages.map((msg, i) => (
-              <MessageBubble key={i} message={msg} />
+              <MessageBubble key={`${msg.timestamp}-${i}`} message={msg} />
             ))}
             
             {/* Streaming content */}
@@ -193,9 +195,7 @@ export default function ChatPanel() {
   );
 }
 
-function WelcomeMessage() {
-  const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const { send, isReady } = useAgent(activeConversationId);
+function WelcomeMessage({ onSend, isReady }: { onSend: (text: string) => void; isReady: boolean }) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -215,7 +215,7 @@ function WelcomeMessage() {
 
   const handleSuggestion = (text: string) => {
     if (isReady) {
-      send(text);
+      onSend(text);
     }
   };
 
@@ -400,6 +400,17 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
   const setPrediction = useContextStore((s) => s.setPrediction);
 
+  // Update context store prediction when a predict tool completes (§4.5)
+  const predictionResult = tool.toolName === 'bash' && tool.status === 'done' && !tool.isError
+    ? (getGoldilocksCommand(tool.args) === 'predict' ? parsePredictionResult(tool.result) : null)
+    : null;
+
+  useEffect(() => {
+    if (predictionResult) {
+      setPrediction(predictionResult);
+    }
+  }, [predictionResult, setPrediction]);
+
   const statusColor = tool.status === 'running' 
     ? 'border-amber-500/50' 
     : tool.isError 
@@ -413,9 +424,6 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
     if (cmd === 'predict') {
       const prediction = parsePredictionResult(tool.result);
       if (prediction) {
-        // Side-effect: update context store (only on first render via ref would be cleaner,
-        // but for simplicity we rely on Zustand's shallow equality check)
-        try { setPrediction(prediction); } catch { /* noop */ }
         return <KPointsResultCard prediction={prediction} />;
       }
     }
