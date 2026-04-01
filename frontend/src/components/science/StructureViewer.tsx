@@ -85,6 +85,17 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
           defaultcolors: $3Dmol.elementColors.rasmol,
         });
 
+        // Invert scroll zoom: 3Dmol zooms opposite to natural scroll direction.
+        // Override by intercepting wheel events before 3Dmol's handler.
+        container.addEventListener('wheel', (e: WheelEvent) => {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          // Manually zoom: positive deltaY = scroll down = zoom out
+          const scaleFactor = 0.002;
+          const delta = e.deltaY * scaleFactor;
+          viewer.zoom(1 - delta, 100);
+        }, { capture: true, passive: false });
+
         viewer.addModel(cifData, 'cif');
 
         try {
