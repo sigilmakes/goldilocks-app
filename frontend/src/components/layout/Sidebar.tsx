@@ -1,8 +1,10 @@
-import { Plus, MessageSquare, Folder, ChevronDown, Trash2, Loader2 } from 'lucide-react';
+import { Plus, MessageSquare, Folder, ChevronDown, Trash2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useConversationsStore, type Conversation } from '../../store/conversations';
 import { useChatStore } from '../../store/chat';
 import { useFilesStore } from '../../store/files';
+import { useToastStore } from '../../store/toast';
+import { ConversationListSkeleton } from '../ui/Skeleton';
 
 export default function Sidebar() {
   const [libraryOpen, setLibraryOpen] = useState(true);
@@ -25,13 +27,17 @@ export default function Sidebar() {
     fetch();
   }, [fetch]);
 
+  const addToast = useToastStore((s) => s.addToast);
+
   const handleNewConversation = async () => {
     try {
       clearMessages();
       clearFiles();
       await create();
+      addToast('Conversation created', 'success');
     } catch (err) {
       console.error('Failed to create conversation:', err);
+      addToast('Failed to create conversation', 'error');
     }
   };
 
@@ -48,8 +54,10 @@ export default function Sidebar() {
     if (confirm('Delete this conversation?')) {
       try {
         await remove(id);
+        addToast('Conversation deleted', 'success');
       } catch (err) {
         console.error('Failed to delete conversation:', err);
+        addToast('Failed to delete conversation', 'error');
       }
     }
   };
@@ -90,9 +98,7 @@ export default function Sidebar() {
         </div>
         
         {isLoading ? (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
-          </div>
+          <ConversationListSkeleton count={5} />
         ) : conversations.length === 0 ? (
           <div className="px-3 py-4 text-sm text-slate-500 text-center">
             No conversations yet

@@ -6,6 +6,8 @@ import { useContextStore } from '../../store/context';
 import { api } from '../../api/client';
 import StructureViewer from '../science/StructureViewer';
 import PredictionSummary from '../science/PredictionSummary';
+import { useToastStore } from '../../store/toast';
+import { FileListSkeleton } from '../ui/Skeleton';
 
 type Tab = 'structure' | 'parameters' | 'files';
 
@@ -233,17 +235,21 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
     }
   }, [conversationId, fetch]);
 
+  const addToast = useToastStore((s) => s.addToast);
+
   const handleFileSelect = useCallback(async (selectedFiles: FileList | null) => {
     if (!selectedFiles || !conversationId) return;
     
     for (const file of Array.from(selectedFiles)) {
       try {
         await upload(conversationId, file);
+        addToast(`Uploaded ${file.name}`, 'success');
       } catch (err) {
         console.error('Upload failed:', err);
+        addToast(`Failed to upload ${file.name}`, 'error');
       }
     }
-  }, [conversationId, upload]);
+  }, [conversationId, upload, addToast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -256,8 +262,10 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
     if (confirm(`Delete ${filename}?`)) {
       try {
         await remove(conversationId, filename);
+        addToast(`Deleted ${filename}`, 'success');
       } catch (err) {
         console.error('Delete failed:', err);
+        addToast(`Failed to delete ${filename}`, 'error');
       }
     }
   };
@@ -314,9 +322,7 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
         <h3 className="text-sm font-medium text-slate-300 mb-2">Workspace Files</h3>
         
         {isLoading ? (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
-          </div>
+          <FileListSkeleton count={3} />
         ) : files.length === 0 ? (
           <div className="bg-slate-700/50 rounded-lg p-3 text-center">
             <p className="text-sm text-slate-400">No files in workspace</p>

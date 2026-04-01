@@ -3,6 +3,9 @@ import { useAuthStore } from './store/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Login from './pages/Login';
 import Workspace from './pages/Workspace';
+import Settings from './pages/Settings';
+import Docs from './pages/Docs';
+import ToastContainer from './components/ui/Toast';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -20,6 +23,22 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/docs"
+          element={
+            <ProtectedRoute>
+              <Docs />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/*"
           element={
             <ProtectedRoute>
@@ -28,6 +47,7 @@ export default function App() {
           }
         />
       </Routes>
+      <ToastContainer />
     </ErrorBoundary>
   );
 }
