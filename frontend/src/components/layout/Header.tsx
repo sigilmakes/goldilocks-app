@@ -1,7 +1,8 @@
-import { PanelLeft, PanelRight, User, LogOut, Settings, Loader2 } from 'lucide-react';
+import { PanelLeft, PanelRight, User, LogOut, Settings } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useModelsStore } from '../../store/models';
 import { useState, useRef, useEffect } from 'react';
+import { ModelSelectorSkeleton } from '../ui/Skeleton';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -64,10 +65,7 @@ export default function Header({
       <div className="flex items-center gap-2">
         {/* Model selector */}
         {isLoading ? (
-          <div className="px-3 py-1.5 text-slate-400 flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">Loading models...</span>
-          </div>
+          <ModelSelectorSkeleton />
         ) : models.length === 0 ? (
           <div className="px-3 py-1.5 text-slate-500 text-sm">
             No models available

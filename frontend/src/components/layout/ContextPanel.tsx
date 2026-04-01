@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Box, Settings2, Files, Upload, Download, Trash2, Loader2, FileText } from 'lucide-react';
+import { Box, Settings2, Files, Upload, Download, Trash2, FileText } from 'lucide-react';
 import { useConversationsStore } from '../../store/conversations';
 import { useFilesStore, type WorkspaceFile } from '../../store/files';
 import { useToastStore } from '../../store/toast';
+import { FileListSkeleton } from '../ui/Skeleton';
 
 type Tab = 'structure' | 'parameters' | 'files';
 
@@ -222,9 +223,7 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
         <h3 className="text-sm font-medium text-slate-300 mb-2">Workspace Files</h3>
         
         {isLoading ? (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
-          </div>
+          <FileListSkeleton count={3} />
         ) : files.length === 0 ? (
           <div className="bg-slate-700/50 rounded-lg p-3 text-center">
             <p className="text-sm text-slate-400">No files in workspace</p>

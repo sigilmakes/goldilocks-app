@@ -3,6 +3,7 @@ import { Send, Paperclip, Sparkles, Square, ChevronDown, ChevronRight, Loader2 }
 import { useChatStore, type ChatMessage, type AssistantBlock, type ToolCall } from '../../store/chat';
 import { useConversationsStore } from '../../store/conversations';
 import { useAgent } from '../../hooks/useAgent';
+import { ChatSkeleton } from '../ui/Skeleton';
 
 export default function ChatPanel() {
   const [message, setMessage] = useState('');
@@ -33,6 +34,10 @@ export default function ChatPanel() {
         {!activeConversationId ? (
           <div className="h-full flex items-center justify-center">
             <p className="text-slate-400">Select or create a conversation to start</p>
+          </div>
+        ) : !isReady && !hasMessages ? (
+          <div className="p-4">
+            <ChatSkeleton />
           </div>
         ) : !hasMessages ? (
           <WelcomeMessage />
