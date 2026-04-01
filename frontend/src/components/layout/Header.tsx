@@ -1,7 +1,7 @@
 import { PanelLeft, PanelRight, User, LogOut, Settings, Sun, Moon } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useModelsStore } from '../../store/models';
-import { useSettingsStore } from '../../store/settings';
+import { useSettingsStore, type ApiKeyInfo } from '../../store/settings';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ModelSelectorSkeleton } from '../ui/Skeleton';
@@ -22,16 +22,17 @@ export default function Header({
   isMobile = false,
 }: HeaderProps) {
   const { user, logout } = useAuthStore();
-  const { theme, setTheme } = useSettingsStore();
+  const { theme, setTheme, apiKeys, fetchApiKeys } = useSettingsStore();
   const navigate = useNavigate();
   const { models, selectedModel, isLoading, fetch, setSelected } = useModelsStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Fetch models on mount
+  // Fetch models and API keys on mount
   useEffect(() => {
     fetch();
-  }, [fetch]);
+    fetchApiKeys();
+  }, [fetch, fetchApiKeys]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -44,6 +45,8 @@ export default function Header({
   }, []);
 
   const selectedModelData = models.find(m => m.id === selectedModel);
+
+  // Determine key source for selected model
 
   return (
     <header className="h-14 border-b border-slate-700 bg-slate-800 flex items-center justify-between px-2 sm:px-4">
@@ -94,6 +97,11 @@ export default function Header({
           <span className="text-xs text-amber-500 bg-amber-500/10 px-2 py-1 rounded hidden sm:inline">
             Thinking
           </span>
+        )}
+
+        {/* API key usage indicator */}
+        {selectedModelData && (
+          <KeySourceBadge provider={selectedModelData.provider} apiKeys={apiKeys} />
         )}
 
         {/* Theme toggle */}
@@ -153,5 +161,25 @@ export default function Header({
         </div>
       </div>
     </header>
+  );
+}
+
+function KeySourceBadge({ provider, apiKeys }: { provider: string; apiKeys: ApiKeyInfo[] }) {
+  const keyInfo = apiKeys.find((k) => k.provider === provider);
+
+  if (!keyInfo || !keyInfo.hasKey) return null;
+
+  if (keyInfo.isServerKey) {
+    return (
+      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 hidden sm:inline">
+        Server
+      </span>
+    );
+  }
+
+  return (
+    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 hidden sm:inline">
+      Your key
+    </span>
   );
 }
