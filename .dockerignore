@@ -1,0 +1,9 @@
+node_modules
+.git
+server/dist
+server/data
+frontend/dist
+scratchpad
+*.db
+*.db-wal
+*.db-shm

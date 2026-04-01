@@ -1,11 +1,21 @@
 # -*- mode: Python -*-
 
+update_settings(suppress_unused_image_warnings=['goldilocks-agent'])
+
 # ── Web App ──
 docker_build(
     'goldilocks-web',
     '.',
     dockerfile='deploy/docker/Dockerfile.web.dev',
     live_update=[
+        # Deps: full rebuild when package files change (must be first)
+        fall_back_on([
+            './package.json',
+            './server/package.json',
+            './frontend/package.json',
+            './package-lock.json',
+        ]),
+
         # Frontend: sync source files, Vite HMR handles the rest
         sync('./frontend/src', '/app/frontend/src'),
         sync('./frontend/index.html', '/app/frontend/index.html'),
@@ -17,14 +27,6 @@ docker_build(
         # Skills and agent context
         sync('./skills', '/app/skills'),
         sync('./AGENTS.md', '/app/AGENTS.md'),
-
-        # Deps: full rebuild when package files change
-        fall_back_on([
-            './package.json',
-            './server/package.json',
-            './frontend/package.json',
-            './package-lock.json',
-        ]),
     ],
 )
 
