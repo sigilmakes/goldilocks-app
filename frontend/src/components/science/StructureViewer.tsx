@@ -14,6 +14,7 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<unknown>(null);
   const [activeStyle, setActiveStyle] = useState<ViewStyle>('ball-stick');
+  const [error, setError] = useState<string | null>(null);
 
   const applyStyle = useCallback((viewer: unknown, style: ViewStyle) => {
     const v = viewer as {
@@ -37,61 +38,83 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
     v.render();
   }, []);
 
-  // Initialize viewer
+  // Combined effect: create viewer AND load model whenever cifData changes
   useEffect(() => {
-    if (!containerRef.current) return;
-
-    const viewer = $3Dmol.createViewer(containerRef.current, {
-      backgroundColor: '0x1e293b', // slate-800
-      antialias: true,
-    });
-
-    viewerRef.current = viewer;
-
-    return () => {
+    if (!containerRef.current || !cifData) {
+      // Clean up old viewer if cifData goes null
       if (viewerRef.current) {
-        (viewerRef.current as { clear: () => void }).clear();
+        try {
+          (viewerRef.current as { clear: () => void }).clear();
+        } catch { /* ignore */ }
         viewerRef.current = null;
       }
-    };
-  }, []);
-
-  // Load CIF data when it changes
-  useEffect(() => {
-    const viewer = viewerRef.current as {
-      removeAllModels: () => void;
-      addModel: (data: string, format: string) => void;
-      addUnitCell: () => void;
-      setStyle: (sel: object, style: object) => void;
-      zoomTo: () => void;
-      render: () => void;
-    } | null;
-
-    if (!viewer) return;
-
-    viewer.removeAllModels();
-
-    if (cifData) {
-      viewer.addModel(cifData, 'cif');
-      try {
-        viewer.addUnitCell();
-      } catch {
-        // Some CIF files may not support unit cell rendering
+      // Clear any leftover canvas elements
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
       }
-      applyStyle(viewer, activeStyle);
-      viewer.zoomTo();
-      viewer.render();
-    } else {
-      viewer.render();
+      return;
     }
-  }, [cifData, applyStyle, activeStyle]);
 
-  const handleStyleChange = (style: ViewStyle) => {
-    setActiveStyle(style);
+    const container = containerRef.current;
+    setError(null);
+
+    // 3Dmol needs the container to have explicit pixel dimensions.
+    // Use a small delay to ensure the container is laid out.
+    const timer = setTimeout(() => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        setError('Viewer container has no size');
+        return;
+      }
+
+      // Clear previous viewer
+      if (viewerRef.current) {
+        try {
+          (viewerRef.current as { clear: () => void }).clear();
+        } catch { /* ignore */ }
+        viewerRef.current = null;
+      }
+      container.innerHTML = '';
+
+      try {
+        // Create viewer with explicit dimensions
+        const viewer = $3Dmol.createViewer(container, {
+          backgroundColor: '0x1e293b',
+          antialias: true,
+          // @ts-ignore — type mismatch in 3Dmol definitions
+          defaultcolors: $3Dmol.elementColors.rasmol,
+        });
+
+        viewer.addModel(cifData, 'cif');
+
+        try {
+          viewer.addUnitCell();
+        } catch {
+          // Some CIF files don't support unit cell rendering
+        }
+
+        applyStyle(viewer, activeStyle);
+        viewer.zoomTo();
+        viewer.render();
+
+        viewerRef.current = viewer;
+      } catch (e) {
+        console.error('3Dmol error:', e);
+        setError(e instanceof Error ? e.message : 'Failed to render structure');
+      }
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [cifData]); // Only re-create when cifData changes
+
+  // Apply style changes without recreating the viewer
+  useEffect(() => {
     if (viewerRef.current) {
-      applyStyle(viewerRef.current, style);
+      applyStyle(viewerRef.current, activeStyle);
     }
-  };
+  }, [activeStyle, applyStyle]);
 
   const handleZoomToFit = () => {
     const viewer = viewerRef.current as {
@@ -125,13 +148,18 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
 
   return (
     <div className="space-y-2">
-      {/* Viewer container */}
-      <div className="relative aspect-square bg-slate-800 rounded-lg overflow-hidden border border-slate-600">
-        <div ref={containerRef} className="w-full h-full" />
+      {/* Viewer container — explicit height so 3Dmol can size its canvas */}
+      <div className="relative bg-slate-800 rounded-lg overflow-hidden border border-slate-600" style={{ height: '280px' }}>
+        <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-800/80">
+            <p className="text-sm text-red-400">{error}</p>
+          </div>
+        )}
         {/* Zoom to fit button */}
         <button
           onClick={handleZoomToFit}
-          className="absolute top-2 right-2 p-1.5 bg-slate-700/80 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors"
+          className="absolute top-2 right-2 p-1.5 bg-slate-700/80 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors z-10"
           title="Zoom to fit"
         >
           <Maximize2 className="w-4 h-4" />
@@ -143,7 +171,7 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
         {styleButtons.map((btn) => (
           <button
             key={btn.id}
-            onClick={() => handleStyleChange(btn.id)}
+            onClick={() => setActiveStyle(btn.id)}
             className={`flex-1 px-2 py-1 text-xs rounded transition-colors ${
               activeStyle === btn.id
                 ? 'bg-amber-500 text-white'
