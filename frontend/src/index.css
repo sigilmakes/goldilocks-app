@@ -89,3 +89,95 @@ body {
 .light ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* ─── Chat markdown ─── */
+.chat-markdown { line-height: 1.6; }
+.chat-markdown > *:first-child { margin-top: 0; }
+.chat-markdown > *:last-child { margin-bottom: 0; }
+
+.chat-markdown p { margin: 0.4em 0; }
+.chat-markdown h1, .chat-markdown h2, .chat-markdown h3 { margin: 0.6em 0 0.3em; font-weight: 600; color: white; }
+.chat-markdown h1 { font-size: 1.2em; }
+.chat-markdown h2 { font-size: 1.1em; }
+.chat-markdown h3 { font-size: 1em; }
+
+.chat-markdown strong { font-weight: 600; color: white; }
+.chat-markdown em { font-style: italic; }
+
+.chat-markdown a { color: #f59e0b; text-decoration: none; }
+.chat-markdown a:hover { text-decoration: underline; }
+
+.chat-markdown code {
+  background: var(--color-bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 0.88em;
+  color: #fbbf24;
+}
+
+.chat-markdown pre {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 6px 0;
+  overflow-x: auto;
+}
+
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: #e2e8f0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.chat-markdown ul, .chat-markdown ol {
+  padding-left: 20px;
+  margin: 0.4em 0;
+}
+
+.chat-markdown li { margin: 0.15em 0; }
+
+.chat-markdown blockquote {
+  border-left: 3px solid rgba(245, 158, 11, 0.5);
+  padding-left: 10px;
+  margin: 0.4em 0;
+  color: #94a3b8;
+}
+
+.chat-markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.88em;
+  width: 100%;
+}
+
+.chat-markdown th, .chat-markdown td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.chat-markdown th {
+  background: var(--color-bg-tertiary);
+  font-weight: 600;
+  color: white;
+}
+
+.chat-markdown hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 0.8em 0;
+}
+
+.chat-markdown img { max-width: 100%; border-radius: 4px; }
+
+/* Light mode overrides */
+.light .chat-markdown h1, .light .chat-markdown h2, .light .chat-markdown h3,
+.light .chat-markdown strong, .light .chat-markdown th { color: #1e293b; }
+.light .chat-markdown code { color: #d97706; }
+.light .chat-markdown pre code { color: #334155; }
+.light .chat-markdown a { color: #d97706; }
+.light .chat-markdown blockquote { color: #64748b; }

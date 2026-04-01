@@ -7,6 +7,10 @@ import { useContextStore, type PredictionResult } from '../../store/context';
 import KPointsResultCard from '../science/KPointsResultCard';
 import InputFileCard from '../science/InputFileCard';
 import { ChatSkeleton } from '../ui/Skeleton';
+import { useMemo } from 'react';
+import { marked } from 'marked';
+
+marked.setOptions({ breaks: true, gfm: true });
 
 export default function ChatPanel() {
   const [message, setMessage] = useState('');
@@ -93,7 +97,7 @@ export default function ChatPanel() {
                     <ThinkingBlock content={currentThinking} />
                   )}
                   {currentText && (
-                    <div className="text-slate-200 whitespace-pre-wrap">{currentText}</div>
+                    <MarkdownContent content={currentText} />
                   )}
                   {Array.from(activeTools.values()).map((tool) => (
                     <ToolCallCard key={tool.toolCallId} tool={tool} />
@@ -301,7 +305,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 function AssistantBlockRenderer({ block }: { block: AssistantBlock }) {
   if (block.type === 'text') {
-    return <div className="text-slate-200 whitespace-pre-wrap">{block.content}</div>;
+    return <MarkdownContent content={block.content} />;
   }
 
   if (block.type === 'thinking') {
@@ -501,5 +505,22 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
         </div>
       )}
     </div>
+  );
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  const html = useMemo(() => {
+    try {
+      return marked.parse(content) as string;
+    } catch {
+      return content;
+    }
+  }, [content]);
+
+  return (
+    <div
+      className="chat-markdown text-slate-200"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
