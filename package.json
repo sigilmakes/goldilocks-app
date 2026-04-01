@@ -8,16 +8,15 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev": "tilt up",
+    "dev:down": "tilt down",
     "dev:server": "npm run dev -w server",
     "dev:frontend": "npm run dev -w frontend",
+    "dev:both": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w frontend -- --host 0.0.0.0\"",
     "build": "npm run build -w server && npm run build -w frontend",
     "start": "npm run start -w server",
     "lint": "npm run lint -w server && npm run lint -w frontend",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend",
-    "k8s:setup": "bash deploy/setup-dev.sh",
-    "k8s:teardown": "bash deploy/teardown-dev.sh",
-    "k8s:build-agent": "docker build -t goldilocks-agent -f deploy/docker/Dockerfile.agent . && kind load docker-image goldilocks-agent --name goldilocks"
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
