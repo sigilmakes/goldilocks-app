@@ -39,3 +39,6 @@ server/data/
 # Misc
 *.bak
 *.tmp
+
+# Agents
+.pi/
