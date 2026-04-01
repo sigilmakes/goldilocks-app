@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: agent-quota
+  namespace: goldilocks
+spec:
+  hard:
+    pods: "50"            # max 50 concurrent agent pods
+    requests.cpu: "12"
+    requests.memory: 12Gi
+    limits.cpu: "25"
+    limits.memory: 25Gi

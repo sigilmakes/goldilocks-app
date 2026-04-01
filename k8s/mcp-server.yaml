@@ -1,0 +1,99 @@
+# MCP Server — persistent deployment for ML inference and HPC gateway
+# Agent pods connect to this as an MCP client for all science + HPC tools
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: goldilocks
+  labels:
+    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/component: science-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+        role: science
+    spec:
+      containers:
+        - name: mcp-server
+          image: ghcr.io/sigilmakes/goldilocks-mcp:latest
+          ports:
+            - containerPort: 3100
+              name: mcp
+          env:
+            - name: MCP_PORT
+              value: "3100"
+            - name: HPC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: hpc-config
+                  key: host
+                  optional: true
+            - name: HPC_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: hpc-config
+                  key: user
+                  optional: true
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+            - name: ssh-key
+              mountPath: /home/mcp/.ssh
+              readOnly: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 60
+            periodSeconds: 30
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache
+        - name: ssh-key
+          secret:
+            secretName: hpc-ssh-key
+            defaultMode: 0400
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  namespace: goldilocks
+spec:
+  selector:
+    app: mcp-server
+  ports:
+    - port: 3100
+      targetPort: 3100
+      name: mcp
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache
+  namespace: goldilocks
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

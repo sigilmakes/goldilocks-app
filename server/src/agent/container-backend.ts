@@ -1,63 +1,69 @@
 /**
- * ContainerSessionBackend — spawns per-user Docker/k8s containers for isolated Pi SDK sessions.
+ * ContainerSessionBackend — creates per-user agent pods in Kubernetes.
  *
- * Production backend: each user's agent runs in its own container with:
- * - Own filesystem namespace (can't see other users' files)
- * - Own process namespace (can't see or signal other processes)
- * - Network policy (can only reach MCP server)
- * - Resource limits (CPU/memory bounds)
+ * This is the ONLY session backend. Every agent session runs in its own k8s pod.
+ * Local dev uses `kind` (Kubernetes IN Docker). Production uses a real cluster.
+ * Same code, same manifests, same behaviour.
  *
- * The web app proxies WebSocket connections to the agent container.
+ * Uses @kubernetes/client-node (CoreV1Api) to create/delete/watch pods.
+ * Kubeconfig is loaded automatically:
+ *   - In-cluster: service account token (production)
+ *   - Out-of-cluster: ~/.kube/config (local dev with kind)
  *
- * Requires:
- * - Docker socket access (for Docker mode) or
- * - k8s service account with pod create/delete (for k8s mode)
+ * Each pod gets:
+ *   - PVC mount for workspace persistence at /work/{userId}/{conversationId}
+ *   - Read-only root filesystem, non-root user, all caps dropped
+ *   - Network policy restricting egress to MCP server only
+ *   - Resource limits (CPU/memory)
  *
- * Environment:
- * - AGENT_IMAGE: container image for agent pods
- * - K8S_NAMESPACE: namespace for agent pods (k8s mode)
- * - SESSION_BACKEND: "container" to enable this backend
+ * WebSocket proxying:
+ *   - In-cluster: direct pod IP connection
+ *   - Out-of-cluster: k8s PortForward API
  */
 
 import { WebSocket } from 'ws';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import * as k8s from '@kubernetes/client-node';
+import net from 'net';
+import { Writable, Readable } from 'stream';
 import type { SessionBackend, SessionHandle } from './session-backend.js';
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
+import { getCoreApi, getKubeConfig, isInCluster } from './k8s-client.js';
 import { CONFIG } from '../config.js';
 
-const execFileAsync = promisify(execFile);
-
-interface ContainerInfo {
-  containerId: string;
+interface PodInfo {
+  podName: string;
   userId: string;
   conversationId: string;
-  port: number;
+  podIp: string | null;
   ws: WebSocket | null;
   lastActive: number;
   status: 'starting' | 'running' | 'stopping' | 'stopped';
 }
 
 /**
- * ContainerSessionBackend manages per-user agent containers.
- *
- * NOTE: This is a design-complete implementation for Docker mode.
- * k8s mode would use the @kubernetes/client-node package instead of docker CLI.
- * The agent container image must be built and available before use.
+ * Build a pod name from user and conversation IDs.
+ * Format: agent-{userId first 8}-{conversationId first 8}
  */
+function buildPodName(userId: string, conversationId: string): string {
+  const u = userId.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
+  const c = conversationId.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
+  return `agent-${u}-${c}`;
+}
+
 export class ContainerSessionBackend implements SessionBackend {
-  private containers = new Map<string, ContainerInfo>();
-  private cleanupInterval: NodeJS.Timeout | null = null;
-  private nextPort = 9000;
+  private pods = new Map<string, PodInfo>();
+  private idleCheckInterval: NodeJS.Timeout | null = null;
+  private readonly namespace: string;
   private readonly agentImage: string;
   private readonly idleTimeoutMs: number;
 
   constructor() {
-    this.agentImage = process.env.AGENT_IMAGE ?? 'ghcr.io/sigilmakes/goldilocks-agent:latest';
-    this.idleTimeoutMs = CONFIG.sessionIdleTimeoutMs;
+    this.namespace = CONFIG.k8sNamespace;
+    this.agentImage = CONFIG.agentImage;
+    this.idleTimeoutMs = CONFIG.agentIdleTimeoutMs;
 
-    // Periodic cleanup of idle containers
-    this.cleanupInterval = setInterval(() => this.evictIdle(), 60000);
+    // Periodic idle check every 60 seconds
+    this.idleCheckInterval = setInterval(() => this.evictIdle(), 60_000);
   }
 
   private getKey(userId: string, conversationId: string): string {
@@ -66,141 +72,271 @@ export class ContainerSessionBackend implements SessionBackend {
 
   async getOrCreate(userId: string, conversationId: string): Promise<SessionHandle> {
     const key = this.getKey(userId, conversationId);
-    const existing = this.containers.get(key);
+    const existing = this.pods.get(key);
 
     if (existing && existing.status === 'running') {
       existing.lastActive = Date.now();
-      // Return a proxy session handle
       return this.createProxyHandle(existing);
     }
 
-    // Allocate a host port for the agent container
-    const port = this.nextPort++;
-    if (this.nextPort > 9999) this.nextPort = 9000;
+    const name = buildPodName(userId, conversationId);
+    const coreApi = getCoreApi();
 
-    const containerName = `goldilocks-agent-${userId.slice(0, 8)}-${conversationId.slice(0, 8)}`;
+    // Check if pod already exists in k8s (e.g. after server restart)
+    try {
+      const existingPod = await coreApi.readNamespacedPod({ name, namespace: this.namespace });
 
-    const info: ContainerInfo = {
-      containerId: '',
+      if (existingPod.status?.phase === 'Running') {
+        const info: PodInfo = {
+          podName: name,
+          userId,
+          conversationId,
+          podIp: existingPod.status.podIP ?? null,
+          ws: null,
+          lastActive: Date.now(),
+          status: 'running',
+        };
+        this.pods.set(key, info);
+        return this.createProxyHandle(info);
+      }
+
+      // Pod exists but not running — delete and recreate
+      if (existingPod.status?.phase !== 'Pending') {
+        await coreApi.deleteNamespacedPod({ name, namespace: this.namespace }).catch(() => {});
+      }
+    } catch (err: unknown) {
+      if (!isK8sNotFound(err)) {
+        throw err;
+      }
+    }
+
+    // Create new agent pod
+    const info: PodInfo = {
+      podName: name,
       userId,
       conversationId,
-      port,
+      podIp: null,
       ws: null,
       lastActive: Date.now(),
       status: 'starting',
     };
 
-    this.containers.set(key, info);
+    this.pods.set(key, info);
 
     try {
-      // Start Docker container
-      const { stdout } = await execFileAsync('docker', [
-        'run', '-d',
-        '--name', containerName,
-        '--rm',
-        '-p', `${port}:8080`,
-        '-e', `USER_ID=${userId}`,
-        '-e', `SESSION_ID=${conversationId}`,
-        '-e', `WEB_APP_URL=http://host.docker.internal:${CONFIG.port}`,
-        '-e', `MCP_SERVER_URL=${process.env.MCP_SERVER_URL ?? 'http://host.docker.internal:3100'}`,
-        '--memory', '512m',
-        '--cpus', '0.5',
-        '--read-only',
-        '--tmpfs', '/tmp:size=256m',
-        '--tmpfs', '/work:size=1g',
-        '--security-opt', 'no-new-privileges',
-        '--cap-drop', 'ALL',
-        this.agentImage,
-      ]);
+      const podSpec = this.buildPodSpec(name, userId, conversationId);
+      await coreApi.createNamespacedPod({ namespace: this.namespace, body: podSpec });
 
-      info.containerId = stdout.trim();
+      // Wait for pod to be ready
+      const podIp = await this.waitForPodReady(name, 60_000);
+      info.podIp = podIp;
       info.status = 'running';
 
-      // Wait for container to be ready
-      await this.waitForReady(port, 30000);
-
-      console.log(`Container started: ${containerName} (port ${port})`);
-
+      console.log(`Agent pod created: ${name} (IP: ${podIp})`);
       return this.createProxyHandle(info);
     } catch (err) {
       info.status = 'stopped';
-      this.containers.delete(key);
-      throw new Error(`Failed to start agent container: ${err instanceof Error ? err.message : String(err)}`);
+      this.pods.delete(key);
+      await coreApi.deleteNamespacedPod({ name, namespace: this.namespace }).catch(() => {});
+      throw new Error(
+        `Failed to create agent pod ${name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
-  private async waitForReady(port: number, timeoutMs: number): Promise<void> {
+  private buildPodSpec(name: string, userId: string, conversationId: string): k8s.V1Pod {
+    return {
+      apiVersion: 'v1',
+      kind: 'Pod',
+      metadata: {
+        name,
+        namespace: this.namespace,
+        labels: {
+          app: 'goldilocks-agent',
+          role: 'agent',
+          'goldilocks/user': userId.slice(0, 63),
+          'goldilocks/conversation': conversationId.slice(0, 63),
+        },
+      },
+      spec: {
+        restartPolicy: 'Never',
+        automountServiceAccountToken: false,
+        securityContext: {
+          runAsNonRoot: true,
+          runAsUser: 1000,
+          runAsGroup: 1000,
+          fsGroup: 1000,
+        },
+        containers: [
+          {
+            name: 'agent',
+            image: this.agentImage,
+            securityContext: {
+              allowPrivilegeEscalation: false,
+              capabilities: { drop: ['ALL'] },
+              readOnlyRootFilesystem: true,
+            },
+            env: [
+              { name: 'USER_ID', value: userId },
+              { name: 'SESSION_ID', value: conversationId },
+              {
+                name: 'WEB_APP_URL',
+                value: isInCluster()
+                  ? `http://web-app.${this.namespace}.svc.cluster.local:${CONFIG.port}`
+                  : `http://host.docker.internal:${CONFIG.port}`,
+              },
+              {
+                name: 'MCP_SERVER_URL',
+                value: process.env.MCP_SERVER_URL
+                  ?? `http://mcp-server.${this.namespace}.svc.cluster.local:3100`,
+              },
+            ],
+            ports: [{ containerPort: 8080, name: 'agent' }],
+            volumeMounts: [
+              { name: 'scratch', mountPath: '/tmp' },
+              { name: 'workspace', mountPath: '/work' },
+            ],
+            resources: {
+              requests: { cpu: '250m', memory: '256Mi' },
+              limits: { cpu: '500m', memory: '512Mi' },
+            },
+          },
+        ],
+        volumes: [
+          {
+            name: 'scratch',
+            emptyDir: { medium: 'Memory', sizeLimit: '256Mi' },
+          },
+          {
+            name: 'workspace',
+            persistentVolumeClaim: {
+              claimName: `workspace-${userId.replace(/[^a-z0-9]/gi, '').slice(0, 40).toLowerCase()}`,
+            },
+          },
+        ],
+      },
+    };
+  }
+
+  /**
+   * Poll the k8s API until the pod is Running with a ready container, or timeout.
+   */
+  private async waitForPodReady(name: string, timeoutMs: number): Promise<string> {
+    const coreApi = getCoreApi();
     const start = Date.now();
+
     while (Date.now() - start < timeoutMs) {
-      try {
-        const res = await fetch(`http://localhost:${port}/health`);
-        if (res.ok) return;
-      } catch {
-        // Container not ready yet
+      const pod = await coreApi.readNamespacedPod({ name, namespace: this.namespace });
+      const phase = pod.status?.phase;
+      const podIp = pod.status?.podIP;
+
+      if (phase === 'Failed' || phase === 'Unknown') {
+        throw new Error(`Pod ${name} entered ${phase} phase`);
       }
-      await new Promise(resolve => setTimeout(resolve, 500));
+
+      if (phase === 'Running' && podIp) {
+        const containerStatuses = pod.status?.containerStatuses ?? [];
+        const agentContainer = containerStatuses.find(
+          (cs: k8s.V1ContainerStatus) => cs.name === 'agent',
+        );
+        if (agentContainer?.ready) {
+          return podIp;
+        }
+      }
+
+      await sleep(1000);
     }
-    throw new Error('Agent container failed to become ready');
+
+    throw new Error(`Pod ${name} failed to become ready within ${timeoutMs / 1000}s`);
   }
 
-  private createProxyHandle(info: ContainerInfo): SessionHandle {
-    // Create a proxy AgentSession that forwards to the container's WebSocket
+  private createProxyHandle(info: PodInfo): SessionHandle {
     const proxySession = this.createProxySession(info);
-
     return {
       session: proxySession,
-      workspacePath: `/work`,  // Inside the container
-      sessionPath: `/tmp/pi-session`,
+      workspacePath: '/work',
+      sessionPath: '/tmp/pi-session',
     };
   }
 
-  private createProxySession(info: ContainerInfo): AgentSession {
-    // This creates a thin proxy that looks like an AgentSession to the web app
-    // but forwards everything to the agent container via WebSocket
-    const subscribers = new Set<(event: any) => void>();
+  /**
+   * Create a proxy AgentSession that forwards over WebSocket to the agent pod.
+   *
+   * In-cluster: direct WebSocket to pod IP
+   * Out-of-cluster: uses k8s PortForward API to tunnel
+   */
+  private createProxySession(info: PodInfo): AgentSession {
+    const subscribers = new Set<(event: unknown) => void>();
     let containerWs: WebSocket | null = null;
+    let portForwardCleanup: (() => void) | null = null;
 
-    const connect = () => {
-      if (containerWs && containerWs.readyState === WebSocket.OPEN) return;
+    const connect = async (): Promise<WebSocket> => {
+      if (containerWs && containerWs.readyState === WebSocket.OPEN) {
+        return containerWs;
+      }
 
-      containerWs = new WebSocket(`ws://localhost:${info.port}`);
+      let wsUrl: string;
 
-      containerWs.on('message', (data) => {
-        try {
-          const event = JSON.parse(data.toString());
-          for (const sub of subscribers) {
-            sub(event);
+      if (isInCluster() && info.podIp) {
+        wsUrl = `ws://${info.podIp}:8080`;
+      } else {
+        const pf = await this.setupPortForward(info.podName);
+        portForwardCleanup = pf.close;
+        wsUrl = `ws://127.0.0.1:${pf.localPort}`;
+      }
+
+      return new Promise<WebSocket>((resolve, reject) => {
+        const ws = new WebSocket(wsUrl);
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error('WebSocket connection to agent pod timed out'));
+        }, 10_000);
+
+        ws.on('open', () => {
+          clearTimeout(timeout);
+          containerWs = ws;
+          info.ws = ws;
+          resolve(ws);
+        });
+
+        ws.on('message', (data) => {
+          try {
+            const event = JSON.parse(data.toString());
+            for (const sub of subscribers) {
+              sub(event);
+            }
+          } catch (err) {
+            console.error('Failed to parse agent event:', err);
           }
-        } catch (err) {
-          console.error('Failed to parse agent event:', err);
-        }
-      });
+        });
 
-      containerWs.on('error', (err) => {
-        console.error('Agent container WebSocket error:', err);
-      });
+        ws.on('error', (err) => {
+          clearTimeout(timeout);
+          console.error(`Agent pod WebSocket error (${info.podName}):`, err.message);
+          reject(err);
+        });
 
-      containerWs.on('close', () => {
-        containerWs = null;
+        ws.on('close', () => {
+          containerWs = null;
+          info.ws = null;
+        });
       });
-
-      info.ws = containerWs;
     };
 
     return {
-      subscribe(callback: (event: any) => void) {
+      subscribe(callback: (event: unknown) => void) {
         subscribers.add(callback);
-        connect();
+        connect().catch(err => console.error('Agent pod connect error:', err));
         return () => {
           subscribers.delete(callback);
         };
       },
       async prompt(text: string) {
-        connect();
-        if (containerWs && containerWs.readyState === WebSocket.OPEN) {
-          containerWs.send(JSON.stringify({ type: 'prompt', text }));
+        const ws = await connect();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'prompt', text }));
         } else {
-          throw new Error('Agent container not connected');
+          throw new Error('Agent pod not connected');
         }
       },
       async abort() {
@@ -213,14 +349,67 @@ export class ContainerSessionBackend implements SessionBackend {
           containerWs.close();
           containerWs = null;
         }
+        if (portForwardCleanup) {
+          portForwardCleanup();
+          portForwardCleanup = null;
+        }
         subscribers.clear();
       },
     } as AgentSession;
   }
 
+  /**
+   * Set up a k8s port-forward tunnel to the agent pod.
+   * Returns a local port that can be used to connect via WebSocket.
+   */
+  private async setupPortForward(
+    name: string,
+  ): Promise<{ localPort: number; close: () => void }> {
+    const kc = getKubeConfig();
+    const forward = new k8s.PortForward(kc);
+
+    // Allocate a free port
+    const localPort = await new Promise<number>((resolve, reject) => {
+      const srv = net.createServer();
+      srv.listen(0, '127.0.0.1', () => {
+        const addr = srv.address();
+        if (addr && typeof addr === 'object') {
+          const port = addr.port;
+          srv.close(() => resolve(port));
+        } else {
+          reject(new Error('Failed to allocate port'));
+        }
+      });
+    });
+
+    // Create a local TCP server that tunnels to the pod via k8s API
+    const server = net.createServer((socket) => {
+      forward.portForward(
+        this.namespace,
+        name,
+        [8080],
+        socket as unknown as Writable,
+        null,
+        socket as unknown as Readable,
+      ).catch((err) => {
+        console.error('Port forward error:', err);
+        socket.destroy();
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(localPort, '127.0.0.1', () => resolve());
+    });
+
+    return {
+      localPort,
+      close: () => { server.close(); },
+    };
+  }
+
   touch(userId: string, conversationId: string): void {
     const key = this.getKey(userId, conversationId);
-    const info = this.containers.get(key);
+    const info = this.pods.get(key);
     if (info) {
       info.lastActive = Date.now();
     }
@@ -228,16 +417,16 @@ export class ContainerSessionBackend implements SessionBackend {
 
   dispose(userId: string, conversationId: string): void {
     const key = this.getKey(userId, conversationId);
-    const info = this.containers.get(key);
+    const info = this.pods.get(key);
     if (info) {
-      this.stopContainer(info).catch(err =>
-        console.error(`Failed to stop container: ${err}`)
+      this.deletePod(info).catch(err =>
+        console.error(`Failed to delete pod ${info.podName}: ${err}`),
       );
-      this.containers.delete(key);
+      this.pods.delete(key);
     }
   }
 
-  private async stopContainer(info: ContainerInfo): Promise<void> {
+  private async deletePod(info: PodInfo): Promise<void> {
     if (info.status === 'stopped' || info.status === 'stopping') return;
 
     info.status = 'stopping';
@@ -247,17 +436,17 @@ export class ContainerSessionBackend implements SessionBackend {
       info.ws = null;
     }
 
-    if (info.containerId) {
-      try {
-        await execFileAsync('docker', ['stop', '-t', '5', info.containerId]);
-        console.log(`Container stopped: ${info.containerId.slice(0, 12)}`);
-      } catch {
-        // Container might already be stopped
-        try {
-          await execFileAsync('docker', ['rm', '-f', info.containerId]);
-        } catch {
-          // Ignore
-        }
+    try {
+      const coreApi = getCoreApi();
+      await coreApi.deleteNamespacedPod({
+        name: info.podName,
+        namespace: this.namespace,
+        gracePeriodSeconds: 5,
+      });
+      console.log(`Agent pod deleted: ${info.podName}`);
+    } catch (err: unknown) {
+      if (!isK8sNotFound(err)) {
+        console.error(`Failed to delete pod ${info.podName}:`, err);
       }
     }
 
@@ -266,29 +455,46 @@ export class ContainerSessionBackend implements SessionBackend {
 
   private evictIdle(): void {
     const now = Date.now();
-    for (const [key, info] of this.containers) {
+    for (const [key, info] of this.pods) {
       if (now - info.lastActive > this.idleTimeoutMs) {
-        console.log(`Evicting idle container: ${key}`);
-        this.stopContainer(info).catch(err =>
-          console.error(`Failed to stop idle container: ${err}`)
+        console.log(`Evicting idle agent pod: ${info.podName} (idle ${Math.round((now - info.lastActive) / 60_000)}min)`);
+        this.deletePod(info).catch(err =>
+          console.error(`Failed to evict pod ${info.podName}: ${err}`),
         );
-        this.containers.delete(key);
+        this.pods.delete(key);
       }
     }
   }
 
   shutdown(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
+    if (this.idleCheckInterval) {
+      clearInterval(this.idleCheckInterval);
+      this.idleCheckInterval = null;
     }
 
-    const stops = [];
-    for (const [, info] of this.containers) {
-      stops.push(this.stopContainer(info));
+    const deletes: Promise<void>[] = [];
+    for (const [, info] of this.pods) {
+      deletes.push(this.deletePod(info));
     }
-    this.containers.clear();
+    this.pods.clear();
 
-    // Best effort stop all containers
-    Promise.allSettled(stops).catch(() => {});
+    Promise.allSettled(deletes).catch(() => {});
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isK8sNotFound(err: unknown): boolean {
+  if (err && typeof err === 'object') {
+    if ('statusCode' in err && (err as { statusCode: number }).statusCode === 404) {
+      return true;
+    }
+    if ('response' in err) {
+      const resp = (err as { response: { statusCode?: number } }).response;
+      if (resp?.statusCode === 404) return true;
+    }
+  }
+  return false;
 }

@@ -12,6 +12,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^11.9.1",

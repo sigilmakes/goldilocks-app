@@ -7,7 +7,7 @@ This document covers the high-level architecture. For focused deep-dives, see:
 - [Backend](architecture/backend.md) — Express routes, middleware, database
 - [WebSocket & Sessions](architecture/websocket-sessions.md) — real-time protocol, session backends
 - [Security](architecture/security.md) — auth, sandboxing, path traversal, limitations
-- [Deployment](architecture/deployment.md) — Docker, Kubernetes, container images
+- [Deployment](architecture/deployment.md) — Kubernetes, container images, local dev with `kind`
 
 ## System Overview
 
@@ -36,11 +36,9 @@ graph TB
         WSS --> SessionMgr["Session Manager"]
     end
 
-    SessionMgr --> Local["LocalSessionBackend<br/><small>in-process Pi SDK</small>"]
-    SessionMgr --> Container["ContainerSessionBackend<br/><small>Docker per user</small>"]
+    SessionMgr --> Container["ContainerSessionBackend<br/><small>k8s pod per user</small>"]
 
-    Local --> PiSDK["Pi SDK AgentSession"]
-    Container --> AgentPod["Agent Container<br/><small>isolated Pi SDK</small>"]
+    Container --> AgentPod["Agent Pod<br/><small>isolated Pi SDK</small>"]
 ```
 
 ## The Request Path (End to End)
