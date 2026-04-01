@@ -14,7 +14,7 @@ export function useConnectionStatus(): ConnectionStatus {
   const [isConnected, setIsConnected] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const retryCount = useRef(0);
-  const timerId = useRef<ReturnType<typeof setTimeout>>();
+  const timerId = useRef<ReturnType<typeof setTimeout>>(undefined);
   const maxDelay = 30000; // 30s max
 
   const checkConnection = useCallback(async () => {

@@ -9,7 +9,6 @@ import {
   Info,
   Eye,
   EyeOff,
-  Plus,
   Trash2,
   X,
   Check,
@@ -263,7 +262,7 @@ function KeyStatusBadge({ keyInfo }: { keyInfo?: ApiKeyInfo }) {
 }
 
 function ApiKeyModal({
-  provider,
+  provider: _provider,
   providerName,
   onClose,
   onSubmit,

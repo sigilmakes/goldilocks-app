@@ -19,7 +19,7 @@ export default function Header({
   onToggleContext,
   sidebarOpen,
   contextOpen,
-  isMobile = false,
+  isMobile: _isMobile = false,
 }: HeaderProps) {
   const { user, logout } = useAuthStore();
   const { theme, setTheme, apiKeys, fetchApiKeys } = useSettingsStore();
