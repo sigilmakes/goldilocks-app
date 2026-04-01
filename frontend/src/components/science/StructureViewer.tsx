@@ -127,6 +127,26 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
     }
   }, [activeStyle, applyStyle]);
 
+  // Resize viewer when container size changes (e.g. sidebar resize)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !viewerRef.current) return;
+
+    const observer = new ResizeObserver(() => {
+      const viewer = viewerRef.current as {
+        resize: () => void;
+        render: () => void;
+      } | null;
+      if (viewer) {
+        viewer.resize();
+        viewer.render();
+      }
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [cifData]); // re-attach when cifData changes (viewer recreated)
+
   const handleZoomToFit = () => {
     const viewer = viewerRef.current as {
       zoomTo: () => void;
@@ -159,8 +179,8 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
 
   return (
     <div className="space-y-2">
-      {/* Viewer container — explicit height so 3Dmol can size its canvas */}
-      <div className="relative bg-slate-800 rounded-lg overflow-hidden border border-slate-600" style={{ height: '280px' }}>
+      {/* Viewer container — aspect-ratio keeps it square-ish, but it stretches with parent width */}
+      <div className="relative bg-slate-800 rounded-lg overflow-hidden border border-slate-600" style={{ aspectRatio: '1', width: '100%' }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
         {error && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-800/80">
