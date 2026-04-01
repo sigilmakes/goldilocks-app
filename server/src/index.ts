@@ -11,6 +11,9 @@ import authRoutes from './auth/routes.js';
 import conversationRoutes from './conversations/routes.js';
 import fileRoutes from './files/routes.js';
 import modelRoutes from './models/routes.js';
+import settingsRoutes from './settings/routes.js';
+import structureRoutes, { libraryRouter } from './structures/routes.js';
+import quickgenRoutes from './quickgen/routes.js';
 import { setupWebSocket } from './agent/websocket.js';
 import { sessionCache } from './agent/sessions.js';
 
@@ -45,6 +48,16 @@ app.use('/api/conversations', fileRoutes);
 
 // Model routes
 app.use('/api/models', modelRoutes);
+
+// Settings routes
+app.use('/api/settings', settingsRoutes);
+
+// Structure routes
+app.use('/api/structures', structureRoutes);
+app.use('/api/library', libraryRouter);
+
+// Quick generation routes (predict, generate)
+app.use('/api', quickgenRoutes);
 
 // Static file serving for frontend
 const frontendDist = resolve(process.cwd(), 'frontend', 'dist');
