@@ -9,6 +9,7 @@ import { writeFile } from 'fs/promises';
 import { getDb } from '../db.js';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
 import { CONFIG } from '../config.js';
+import { validateWorkspacePath } from '../agent/workspace-guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -186,8 +187,9 @@ libraryRouter.post('/', (req: AuthRequest, res: Response) => {
   let resolvedPath = filePath;
   if (conversationId) {
     const workspacePath = getWorkspacePath(req.user.id, conversationId);
-    resolvedPath = resolve(workspacePath, filePath);
-    if (!resolvedPath.startsWith(workspacePath)) {
+    try {
+      resolvedPath = validateWorkspacePath(workspacePath, filePath);
+    } catch {
       res.status(403).json({ error: 'Path traversal detected' });
       return;
     }

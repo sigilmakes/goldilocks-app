@@ -7,6 +7,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { writeFile } from 'fs/promises';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
 import { CONFIG } from '../config.js';
+import { validateWorkspacePath } from '../agent/workspace-guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -40,11 +41,7 @@ function resolveStructurePath(
   structurePath: string,
 ): string {
   const workspacePath = getWorkspacePath(userId, conversationId);
-  const resolved = resolve(workspacePath, structurePath);
-  if (!resolved.startsWith(workspacePath)) {
-    throw new Error('Path traversal detected');
-  }
-  return resolved;
+  return validateWorkspacePath(workspacePath, structurePath);
 }
 
 // POST /api/predict - K-point prediction
