@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Settings2, Files, Upload, Download, Trash2, Loader2, FileText } from 'lucide-react';
 import { useConversationsStore } from '../../store/conversations';
 import { useFilesStore, type WorkspaceFile } from '../../store/files';
+import { useToastStore } from '../../store/toast';
 
 type Tab = 'structure' | 'parameters' | 'files';
 
@@ -134,17 +135,21 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
     }
   }, [conversationId, fetch]);
 
+  const addToast = useToastStore((s) => s.addToast);
+
   const handleFileSelect = useCallback(async (selectedFiles: FileList | null) => {
     if (!selectedFiles || !conversationId) return;
     
     for (const file of Array.from(selectedFiles)) {
       try {
         await upload(conversationId, file);
+        addToast(`Uploaded ${file.name}`, 'success');
       } catch (err) {
         console.error('Upload failed:', err);
+        addToast(`Failed to upload ${file.name}`, 'error');
       }
     }
-  }, [conversationId, upload]);
+  }, [conversationId, upload, addToast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -157,8 +162,10 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
     if (confirm(`Delete ${filename}?`)) {
       try {
         await remove(conversationId, filename);
+        addToast(`Deleted ${filename}`, 'success');
       } catch (err) {
         console.error('Delete failed:', err);
+        addToast(`Failed to delete ${filename}`, 'error');
       }
     }
   };

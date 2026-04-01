@@ -3,6 +3,7 @@ import Header from '../components/layout/Header';
 import Sidebar from '../components/layout/Sidebar';
 import ChatPanel from '../components/layout/ChatPanel';
 import ContextPanel from '../components/layout/ContextPanel';
+import ConnectionBanner from '../components/ui/ConnectionBanner';
 
 export default function Workspace() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -10,6 +11,7 @@ export default function Workspace() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-900">
+      <ConnectionBanner />
       <Header
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         onToggleContext={() => setContextOpen(!contextOpen)}
