@@ -14,7 +14,10 @@
     "build": "npm run build -w server && npm run build -w frontend",
     "start": "npm run start -w server",
     "lint": "npm run lint -w server && npm run lint -w frontend",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend"
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend",
+    "k8s:setup": "bash deploy/setup-dev.sh",
+    "k8s:teardown": "bash deploy/teardown-dev.sh",
+    "k8s:build-agent": "docker build -t goldilocks-agent -f deploy/docker/Dockerfile.agent . && kind load docker-image goldilocks-agent --name goldilocks"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
