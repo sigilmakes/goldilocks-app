@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { CONFIG } from '../config.js';
 import { sessionCache } from './sessions.js';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
+import type { ClientMessage, ServerMessage } from '../shared/types.js';
 
 interface AuthUser {
   id: string;
@@ -17,27 +18,6 @@ interface ClientState {
   unsubscribe: (() => void) | null;
   isProcessing: boolean;
 }
-
-// Message types from client
-type ClientMessage =
-  | { type: 'auth'; token: string }
-  | { type: 'open'; conversationId: string }
-  | { type: 'prompt'; text: string; files?: string[] }
-  | { type: 'abort' };
-
-// Message types to client
-type ServerMessage =
-  | { type: 'auth_ok'; userId: string }
-  | { type: 'auth_fail'; error: string }
-  | { type: 'ready'; conversationId: string }
-  | { type: 'text_delta'; delta: string }
-  | { type: 'thinking_delta'; delta: string }
-  | { type: 'tool_start'; toolName: string; toolCallId: string; args: unknown }
-  | { type: 'tool_update'; toolCallId: string; content: string }
-  | { type: 'tool_end'; toolName: string; toolCallId: string; result: unknown; isError: boolean }
-  | { type: 'message_end' }
-  | { type: 'agent_end' }
-  | { type: 'error'; error: string };
 
 function send(ws: WebSocket, msg: ServerMessage): void {
   try {

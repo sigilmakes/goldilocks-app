@@ -1,19 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAuthStore } from '../store/auth';
 import { useChatStore } from '../store/chat';
-
-type ServerMessage =
-  | { type: 'auth_ok'; userId: string }
-  | { type: 'auth_fail'; error: string }
-  | { type: 'ready'; conversationId: string }
-  | { type: 'text_delta'; delta: string }
-  | { type: 'thinking_delta'; delta: string }
-  | { type: 'tool_start'; toolName: string; toolCallId: string; args: unknown }
-  | { type: 'tool_update'; toolCallId: string; content: string }
-  | { type: 'tool_end'; toolName: string; toolCallId: string; result: unknown; isError: boolean }
-  | { type: 'message_end' }
-  | { type: 'agent_end' }
-  | { type: 'error'; error: string };
+import type { ServerMessage } from '../../../shared/types';
 
 export function useAgent(conversationId: string | null) {
   const ws = useRef<WebSocket | null>(null);
