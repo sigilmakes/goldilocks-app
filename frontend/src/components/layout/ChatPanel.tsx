@@ -80,7 +80,7 @@ export default function ChatPanel() {
             <ChatSkeleton />
           </div>
         ) : !hasMessages ? (
-          <WelcomeMessage />
+          <WelcomeMessage onSend={send} isReady={isReady} />
         ) : (
           <div className="space-y-4 max-w-3xl mx-auto">
             {messages.map((msg, i) => (
@@ -193,9 +193,7 @@ export default function ChatPanel() {
   );
 }
 
-function WelcomeMessage() {
-  const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const { send, isReady } = useAgent(activeConversationId);
+function WelcomeMessage({ onSend, isReady }: { onSend: (text: string) => void; isReady: boolean }) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -215,7 +213,7 @@ function WelcomeMessage() {
 
   const handleSuggestion = (text: string) => {
     if (isReady) {
-      send(text);
+      onSend(text);
     }
   };
 
