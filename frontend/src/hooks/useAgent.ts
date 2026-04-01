@@ -22,11 +22,11 @@ export function useAgent(conversationId: string | null) {
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Use refs to avoid stale closures and prevent effect re-runs
-  const conversationIdRef = useRef(conversationId);
-  conversationIdRef.current = conversationId;
+  // Generation counter to detect stale connections after rapid switches (§4.1)
+  const generationRef = useRef(0);
 
   useEffect(() => {
+    const generation = ++generationRef.current;
     if (!conversationId || !token) {
       setIsConnected(false);
       setIsReady(false);
@@ -62,13 +62,15 @@ export function useAgent(conversationId: string | null) {
         return;
       }
 
-      // Get current store state for each message
+      // Discard messages from stale connections (§4.1)
+      if (generation !== generationRef.current) return;
+
       const store = useChatStore.getState();
 
       switch (msg.type) {
         case 'auth_ok':
-          // Open the conversation using ref to get current value
-          socket.send(JSON.stringify({ type: 'open', conversationId: conversationIdRef.current }));
+          // Use the conversationId captured at effect creation, not a ref
+          socket.send(JSON.stringify({ type: 'open', conversationId }));
           break;
 
         case 'auth_fail':
