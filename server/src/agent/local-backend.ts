@@ -94,8 +94,31 @@ export class LocalSessionBackend implements SessionBackend {
       }
     }
 
-    // Set up auth storage with server API keys
+    // Set up auth storage: user-specific keys take priority over server keys (§5.15)
     const authStorage = AuthStorage.create();
+
+    // Load user's encrypted API keys from the database
+    try {
+      const { getDb } = await import('../db.js');
+      const { decrypt } = await import('../crypto.js');
+      const db = getDb();
+      const userKeys = db.prepare(
+        'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?'
+      ).all(userId) as Array<{ provider: string; encrypted_key: string }>;
+
+      for (const row of userKeys) {
+        try {
+          const decrypted = decrypt(row.encrypted_key);
+          authStorage.setRuntimeApiKey(row.provider, decrypted);
+        } catch {
+          console.warn(`Failed to decrypt API key for provider ${row.provider}, user ${userId}`);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load user API keys:', err);
+    }
+
+    // Server keys as fallback (only set if user doesn't have their own)
     if (CONFIG.anthropicApiKey) {
       authStorage.setRuntimeApiKey('anthropic', CONFIG.anthropicApiKey);
     }
