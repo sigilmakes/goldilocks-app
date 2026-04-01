@@ -12,9 +12,21 @@ export const CONFIG = {
   workspaceRoot: process.env.WORKSPACE_ROOT ?? './data/workspaces',
   
   // Auth
-  jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-in-production',
+  get jwtSecret(): string {
+    const secret = process.env.JWT_SECRET;
+    if (!secret && process.env.NODE_ENV === 'production') {
+      throw new Error('JWT_SECRET must be set in production');
+    }
+    return secret ?? 'dev-secret-change-in-production';
+  },
   jwtExpiresIn: '7d',
-  encryptionKey: process.env.ENCRYPTION_KEY ?? 'dev-encryption-key-32-bytes!!!',
+  get encryptionKey(): string {
+    const key = process.env.ENCRYPTION_KEY;
+    if (!key && process.env.NODE_ENV === 'production') {
+      throw new Error('ENCRYPTION_KEY must be set in production');
+    }
+    return key ?? 'dev-encryption-key-32-bytes!!!';
+  },
   
   // Session management
   maxSessions: parseInt(process.env.MAX_SESSIONS ?? '20', 10),
