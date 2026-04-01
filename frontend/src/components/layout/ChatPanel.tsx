@@ -398,6 +398,17 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
   const setPrediction = useContextStore((s) => s.setPrediction);
 
+  // Update context store prediction when a predict tool completes (§4.5)
+  const predictionResult = tool.toolName === 'bash' && tool.status === 'done' && !tool.isError
+    ? (getGoldilocksCommand(tool.args) === 'predict' ? parsePredictionResult(tool.result) : null)
+    : null;
+
+  useEffect(() => {
+    if (predictionResult) {
+      setPrediction(predictionResult);
+    }
+  }, [predictionResult, setPrediction]);
+
   const statusColor = tool.status === 'running' 
     ? 'border-amber-500/50' 
     : tool.isError 
@@ -411,9 +422,6 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
     if (cmd === 'predict') {
       const prediction = parsePredictionResult(tool.result);
       if (prediction) {
-        // Side-effect: update context store (only on first render via ref would be cleaner,
-        // but for simplicity we rely on Zustand's shallow equality check)
-        try { setPrediction(prediction); } catch { /* noop */ }
         return <KPointsResultCard prediction={prediction} />;
       }
     }
