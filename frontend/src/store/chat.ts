@@ -31,12 +31,34 @@ function loadHistory(): Record<string, ChatMessage[]> {
   return {};
 }
 
+/** Trim large tool results to avoid blowing localStorage quota */
+function trimForStorage(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((msg) => {
+    if (msg.role !== 'assistant') return msg;
+    return {
+      ...msg,
+      blocks: msg.blocks.map((block) => {
+        if (block.type !== 'tool_call') return block;
+        const result = block.data.result;
+        const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+        // Truncate results larger than 2KB
+        if (resultStr.length > 2048) {
+          return {
+            ...block,
+            data: { ...block.data, result: resultStr.slice(0, 2048) + '\n... (truncated for storage)' },
+          };
+        }
+        return block;
+      }),
+    };
+  });
+}
+
 function saveHistory(history: Record<string, ChatMessage[]>) {
   try {
     // Prune oldest conversations if we exceed the limit
     const keys = Object.keys(history);
     if (keys.length > MAX_STORED_CONVERSATIONS) {
-      // Find oldest by most recent message timestamp
       const sorted = keys.sort((a, b) => {
         const aLast = history[a]?.[history[a].length - 1]?.timestamp ?? 0;
         const bLast = history[b]?.[history[b].length - 1]?.timestamp ?? 0;
@@ -47,7 +69,9 @@ function saveHistory(history: Record<string, ChatMessage[]>) {
       }
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  } catch { /* storage full or unavailable */ }
+  } catch {
+    console.warn('Failed to save chat history to localStorage (quota exceeded?)');
+  }
 }
 
 // ---
@@ -87,7 +111,7 @@ function persistMessages(conversationId: string | null, messages: ChatMessage[])
   if (messages.length === 0) {
     delete history[conversationId];
   } else {
-    history[conversationId] = messages;
+    history[conversationId] = trimForStorage(messages);
   }
   saveHistory(history);
 }
