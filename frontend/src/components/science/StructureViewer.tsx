@@ -58,6 +58,9 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
     const container = containerRef.current;
     setError(null);
 
+    // Store wheel handler ref for cleanup
+    let wheelHandler: ((e: WheelEvent) => void) | null = null;
+
     // 3Dmol needs the container to have explicit pixel dimensions.
     // Use a small delay to ensure the container is laid out.
     const timer = setTimeout(() => {
@@ -86,15 +89,15 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
         });
 
         // Invert scroll zoom: 3Dmol zooms opposite to natural scroll direction.
-        // Override by intercepting wheel events before 3Dmol's handler.
-        container.addEventListener('wheel', (e: WheelEvent) => {
+        // Store handler ref for cleanup on viewer recreation (§4.9)
+        wheelHandler = (e: WheelEvent) => {
           e.preventDefault();
           e.stopImmediatePropagation();
-          // Manually zoom: positive deltaY = scroll down = zoom out
           const scaleFactor = 0.002;
           const delta = e.deltaY * scaleFactor;
           viewer.zoom(1 - delta, 100);
-        }, { capture: true, passive: false });
+        };
+        container.addEventListener('wheel', wheelHandler, { capture: true, passive: false });
 
         viewer.addModel(cifData, 'cif');
 
@@ -117,6 +120,10 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
 
     return () => {
       clearTimeout(timer);
+      // Clean up wheel listener to prevent accumulation (§4.9)
+      if (wheelHandler) {
+        container.removeEventListener('wheel', wheelHandler, { capture: true } as EventListenerOptions);
+      }
     };
   }, [cifData]); // Only re-create when cifData changes
 
