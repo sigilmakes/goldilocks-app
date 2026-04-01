@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Settings2, Files, Upload, Download, Trash2, Loader2, FileText, Zap } from 'lucide-react';
 import { useConversationsStore } from '../../store/conversations';
 import { useFilesStore, type WorkspaceFile } from '../../store/files';
+import { useAuthStore } from '../../store/auth';
 import { useContextStore } from '../../store/context';
 import { api } from '../../api/client';
 import StructureViewer from '../science/StructureViewer';
@@ -64,10 +65,20 @@ function StructureTab({ conversationId }: { conversationId: string | null }) {
     }
     const cifFile = files.find((f) => f.name.toLowerCase().endsWith('.cif'));
     if (cifFile) {
-      fetch(`/api/conversations/${conversationId}/files/${cifFile.name}`)
-        .then((res) => res.text())
+      // Need auth token for the file download endpoint
+      const token = useAuthStore.getState().token;
+      fetch(`/api/conversations/${conversationId}/files/${cifFile.name}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.text();
+        })
         .then((text) => setCifData(text))
-        .catch(() => setCifData(null));
+        .catch((err) => {
+          console.error('Failed to load CIF:', err);
+          setCifData(null);
+        });
     } else {
       setCifData(null);
     }
