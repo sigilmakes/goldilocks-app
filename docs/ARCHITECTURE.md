@@ -7,7 +7,7 @@ This document covers the high-level architecture. For focused deep-dives, see:
 - [Backend](architecture/backend.md) — Express routes, middleware, database
 - [WebSocket & Sessions](architecture/websocket-sessions.md) — real-time protocol, session backends
 - [Security](architecture/security.md) — auth, sandboxing, path traversal, limitations
-- [Deployment](architecture/deployment.md) — Docker, Kubernetes, container images
+- [Deployment](architecture/deployment.md) — Kubernetes, container images, local dev with `kind`
 
 ## System Overview
 

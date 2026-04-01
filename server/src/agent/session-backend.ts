@@ -15,8 +15,8 @@ export interface SessionHandle {
 /**
  * Abstract interface for how Pi SDK sessions are created, cached, and managed.
  *
- * Implementations can run sessions in-process (LocalSessionBackend) or
- * delegate to external sandboxed containers (future ContainerBackend, P6D).
+ * The only implementation is ContainerSessionBackend, which creates per-user
+ * agent pods in Kubernetes. Local dev uses kind, production uses a real cluster.
  */
 export interface SessionBackend {
   /**

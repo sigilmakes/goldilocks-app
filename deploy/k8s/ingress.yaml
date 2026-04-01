@@ -1,5 +1,4 @@
 # Ingress for external access — adjust for your ingress controller
-# Supports both nginx-ingress and traefik (k3s default)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -11,9 +10,6 @@ metadata:
     # nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     # nginx.ingress.kubernetes.io/websocket-services: web-app
     #
-    # For traefik (k3s default):
-    # traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    # traefik.ingress.kubernetes.io/router.tls: "true"
     {}
 spec:
   rules:

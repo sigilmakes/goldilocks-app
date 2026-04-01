@@ -9,11 +9,16 @@ materials scientists set up DFT calculations through a conversational interface.
 
 ```bash
 npm install          # installs both frontend + server workspaces
+npm run k8s:setup    # one-time: create kind cluster + apply k8s manifests
 npm run dev          # starts Vite (5173) + Express (3000) concurrently
 ```
 
 Vite proxies `/api` and `/ws` to port 3000. You need at least one LLM API key
 set as an env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY`).
+
+Agent sessions always run in k8s pods (kind cluster for local dev).
+Rebuild agent image: `npm run k8s:build-agent`
+Tear down: `npm run k8s:teardown`
 
 Type checking (both workspaces): `npm run typecheck`
 Build: `npm run build`
@@ -49,9 +54,8 @@ goldilocks-app/
 │       │   ├── websocket.ts        WebSocket server: auth → open → prompt → stream Pi SDK events
 │       │   ├── sessions.ts         SessionCache wrapper — selects backend, returns AgentSession
 │       │   ├── session-backend.ts  SessionBackend interface + SessionHandle type
-│       │   ├── local-backend.ts    In-process Pi SDK sessions with LRU eviction (dev/single-user)
-│       │   ├── container-backend.ts Docker container per session (prod/multi-user)
-│       │   ├── pod-reaper.ts       Periodic cleanup of orphaned agent containers (>4h)
+│       │   ├── container-backend.ts k8s pod per session (via @kubernetes/client-node)
+│       │   ├── k8s-client.ts       Shared KubeConfig/CoreV1Api singleton
 │       │   └── workspace-guard.ts  resolve() + startsWith() path traversal prevention
 │       ├── auth/
 │       │   ├── routes.ts           POST register, login, refresh; GET me
@@ -171,18 +175,14 @@ interface SessionBackend {
 }
 ```
 
-**LocalSessionBackend** (`local-backend.ts`): Runs Pi SDK in-process.
-Creates workspace at `WORKSPACE_ROOT/<userId>/<conversationId>/workspace/`.
-Writes `AGENTS.md` + symlinks `goldilocks` CLI into each workspace.
-LRU cache with `MAX_SESSIONS` limit, idle eviction every 60s.
-Loads user's encrypted API keys from DB, decrypts, sets on AuthStorage.
+**ContainerSessionBackend** (`container-backend.ts`): Creates k8s pods per session
+via `@kubernetes/client-node`. Pods run with read-only rootfs, non-root user,
+all caps dropped, 512Mi memory limit. Each user gets a PVC for workspace
+persistence. Idle pods are evicted after 30 minutes (configurable via
+`AGENT_IDLE_TIMEOUT_MS`). In-cluster: direct pod IP WebSocket. Out-of-cluster:
+k8s PortForward API tunnel.
 
-**ContainerSessionBackend** (`container-backend.ts`): Spawns Docker container per session.
-Port range 9000–9999. Containers run with `--read-only --memory 512m --cpus 0.5 --cap-drop ALL`.
-Creates a proxy AgentSession that forwards WS messages to the container.
-PodReaper (`pod-reaper.ts`) kills orphaned containers >4h old.
-
-Selected by `SESSION_BACKEND` env var in `sessions.ts`.
+There is only one backend — k8s is the only way to run agent sessions.
 
 ## How To: Add a New API Route
 

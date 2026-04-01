@@ -2,9 +2,13 @@
 
 ## Architecture
 
+Kubernetes is the **only** way to run agent sessions. Local dev uses `kind`
+(Kubernetes IN Docker). Production uses a real k8s cluster. Same code, same
+manifests, same behaviour.
+
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Web App    │────▶│  Agent Container  │────▶│   MCP Server    │
+│   Web App    │────▶│  Agent Pod        │────▶│   MCP Server    │
 │  (Deployment)│     │  (per user)       │     │  (Deployment)   │
 │              │     │                   │     │                 │
 │  auth, UI,   │     │  Pi SDK only.     │     │  ML inference   │
@@ -28,65 +32,74 @@
 
 ### Security Model
 
-- Agent containers are **paper-thin**: just Pi SDK + MCP client
-- **No SSH keys** in agent containers — only MCP server has HPC access
+- Agent pods are **paper-thin**: just Pi SDK + MCP client
+- **No SSH keys** in agent pods — only MCP server has HPC access
 - **NetworkPolicy** restricts agent egress to MCP server only
-- Containers run as non-root, read-only rootfs, all caps dropped
+- Pods run as non-root, read-only rootfs, all caps dropped
 - Per-namespace resource quota limits total agent pods
+- Per-user workspace PVC for file persistence
 
-## Deployment Options
+## Local Development (kind)
 
-### Option A: Docker Compose (Development / Single User)
+### Prerequisites
+
+- Docker
+- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
+- kubectl
+
+### Setup
 
 ```bash
-# From the repo root
-docker compose -f deploy/docker/docker-compose.prod.yaml up --build
+# One-time setup: creates kind cluster, builds agent image, applies manifests
+npm run k8s:setup
+
+# Start the web app locally (agents run in kind)
+npm run dev
 ```
 
-This runs the web app with `SESSION_BACKEND=local` (in-process Pi SDK, no isolation).
+The web app (Express) runs on your host and creates agent pods in the kind
+cluster via the k8s API. Vite HMR works normally for frontend development.
 
-### Option B: k3s Single Node (Prototyping)
+### Daily workflow
 
 ```bash
-cd deploy/k8s
-bash setup-k3s.sh
+npm run dev                   # Start web app (agents in kind)
+npm run k8s:build-agent       # Rebuild + reload agent image after changes
+kubectl get pods -n goldilocks  # Check agent pods
+npm run k8s:teardown          # Delete kind cluster when done
 ```
 
-Prerequisites:
-- A Linux VM with 4+ GB RAM
-- Root access (for k3s install)
+## Production (Kubernetes Cluster)
 
-### Option C: Institutional Kubernetes Cluster
+### Prerequisites
 
-1. Request a namespace from your cluster admins
-2. Ensure a CNI with NetworkPolicy support (Calico, Cilium)
-3. Build and push container images
-4. Apply manifests:
+- A k8s cluster with NetworkPolicy support (Calico, Cilium)
+- kubectl configured with cluster access
+
+### Deploy
 
 ```bash
-kubectl apply -f deploy/k8s/namespace.yaml
-kubectl apply -f deploy/k8s/rbac.yaml
-kubectl apply -f deploy/k8s/network-policies.yaml
-kubectl apply -f deploy/k8s/resource-quota.yaml
-kubectl apply -f deploy/k8s/mcp-server.yaml
-kubectl apply -f deploy/k8s/web-app.yaml
-kubectl apply -f deploy/k8s/ingress.yaml
+# Apply manifests from the k8s/ directory
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/rbac.yaml
+kubectl apply -f k8s/network-policies.yaml
+kubectl apply -f k8s/resource-quota.yaml
+kubectl apply -f k8s/mcp-server.yaml
+kubectl apply -f k8s/web-app.yaml
+kubectl apply -f k8s/ingress.yaml
 ```
 
 ## Building Container Images
 
 ```bash
 # Web app
-docker build -t ghcr.io/sigilmakes/goldilocks-web:latest \
-  -f deploy/docker/Dockerfile.web .
+docker build -t goldilocks-web -f deploy/docker/Dockerfile.web .
 
 # Agent
-docker build -t ghcr.io/sigilmakes/goldilocks-agent:latest \
-  -f deploy/docker/Dockerfile.agent .
+docker build -t goldilocks-agent -f deploy/docker/Dockerfile.agent .
 
 # MCP server (needs goldilocks-mcp repo)
-docker build -t ghcr.io/sigilmakes/goldilocks-mcp:latest \
-  -f deploy/docker/Dockerfile.mcp .
+docker build -t goldilocks-mcp -f deploy/docker/Dockerfile.mcp .
 ```
 
 ## Configuration
@@ -100,9 +113,10 @@ docker build -t ghcr.io/sigilmakes/goldilocks-mcp:latest \
 | `ANTHROPIC_API_KEY` | No | — | Server-wide Anthropic API key |
 | `OPENAI_API_KEY` | No | — | Server-wide OpenAI API key |
 | `GOOGLE_API_KEY` | No | — | Server-wide Google API key |
-| `SESSION_BACKEND` | No | `local` | `local` or `container` |
-| `AGENT_IMAGE` | No | `ghcr.io/.../goldilocks-agent:latest` | Agent container image |
 | `K8S_NAMESPACE` | No | `goldilocks` | k8s namespace for agent pods |
+| `AGENT_IMAGE` | No | `goldilocks-agent:latest` | Agent container image |
+| `AGENT_IDLE_TIMEOUT_MS` | No | `1800000` | Agent pod idle timeout (30min) |
+| `WORKSPACE_QUOTA_BYTES` | No | `1073741824` | Per-user workspace size (1GB) |
 
 ### Secrets
 

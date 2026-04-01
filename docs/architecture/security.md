@@ -21,7 +21,7 @@ graph LR
 - **JWT tokens:** Signed with `JWT_SECRET`, 7-day expiry, payload is `{ id, email }`
 - **Token refresh:** `POST /api/auth/refresh` issues a new token from the existing one
 - **Per-user data isolation:** All database queries filter by `req.user.id`.
-  File paths are scoped to `WORKSPACE_ROOT/<userId>/<conversationId>/workspace/`
+  Agent pods are per-user with workspace PVCs.
 
 ## API Key Encryption
 
@@ -47,7 +47,7 @@ Implementation in `server/src/crypto.ts`:
 - Key derived from `ENCRYPTION_KEY` env var via `SHA-256`
 - Random 16-byte IV per encryption
 - Stored as `hex(iv):hex(authTag):hex(ciphertext)`
-- Decrypted at session creation time in `LocalSessionBackend`
+- Decrypted and passed to agent pods as environment variables
 
 ## Path Traversal Prevention
 
@@ -79,53 +79,70 @@ Applied in `server/src/index.ts` via `express-rate-limit`:
 | Global (`/api/*`) | 1 minute | 60 (prod) / 300 (dev) |
 | Auth (`/api/auth/*`) | 15 minutes | 20 |
 
-## Sandboxing Boundaries
+## Agent Pod Sandboxing
+
+Every agent session runs in its own k8s pod with full isolation:
 
 ```mermaid
 graph TB
-    subgraph "No Sandboxing (LocalSessionBackend)"
-        Express["Express Server"]
-        Agent1["Agent Session 1"]
-        Agent2["Agent Session 2"]
-        FS["Shared Filesystem"]
+    subgraph "k8s Cluster"
+        Express["Web App Pod<br/><small>Express + React</small>"]
 
-        Express --> Agent1 & Agent2
-        Agent1 & Agent2 --> FS
-    end
+        subgraph "Agent Pod 1"
+            A1["Pi SDK + MCP client<br/><small>read-only rootfs<br/>512Mi mem / 500m CPU<br/>cap-drop ALL<br/>runAsNonRoot</small>"]
+            PVC1["PVC: workspace-user1"]
+        end
 
-    subgraph "Full Sandboxing (ContainerSessionBackend)"
-        Express2["Express Server"]
-        C1["Container 1<br/><small>read-only rootfs<br/>512MB mem / 0.5 CPU<br/>cap-drop ALL</small>"]
-        C2["Container 2<br/><small>read-only rootfs<br/>512MB mem / 0.5 CPU<br/>cap-drop ALL</small>"]
-        FS1["tmpfs /work"]
-        FS2["tmpfs /work"]
+        subgraph "Agent Pod 2"
+            A2["Pi SDK + MCP client<br/><small>read-only rootfs<br/>512Mi mem / 500m CPU<br/>cap-drop ALL<br/>runAsNonRoot</small>"]
+            PVC2["PVC: workspace-user2"]
+        end
 
-        Express2 -->|"WS proxy"| C1 & C2
-        C1 --> FS1
-        C2 --> FS2
+        Express -->|"WS proxy"| A1
+        Express -->|"WS proxy"| A2
+        A1 --> PVC1
+        A2 --> PVC2
     end
 ```
 
+### Pod Security
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `runAsNonRoot` | `true` | No root processes |
+| `runAsUser` | `1000` | Unprivileged user |
+| `readOnlyRootFilesystem` | `true` | Immutable container |
+| `allowPrivilegeEscalation` | `false` | No setuid/setgid |
+| `capabilities.drop` | `["ALL"]` | No Linux capabilities |
+| `automountServiceAccountToken` | `false` | No k8s API access |
+
+### Network Isolation
+
+NetworkPolicy restricts agent pod traffic:
+- **Ingress:** Only from web-app pods (port 8080)
+- **Egress:** Only DNS (kube-dns) + MCP server (port 3100) + web app (port 3000)
+- **No internet access** for agent pods
+
+### Resource Limits
+
+Per-pod: 500m CPU, 512Mi memory, 256Mi scratch tmpfs
+Per-namespace: 50 pods, 12 CPU requests, 12Gi memory requests (ResourceQuota)
+
 ## Known Limitations
 
-1. **LocalSessionBackend has no sandboxing.** All agent sessions run in the
-   Express process. A prompt injection could access the filesystem, environment
-   variables, or other users' workspaces. Acceptable for single-user dev, not
-   for multi-user production.
+1. **Workspace guard is convention-based.** `resolve()` + `startsWith()` catches
+   `../` traversal but doesn't prevent symlink escapes. Agent pods provide real
+   filesystem isolation via k8s.
 
-2. **Workspace guard is convention-based.** `resolve()` + `startsWith()` catches
-   `../` traversal but doesn't prevent symlink escapes. Real sandboxing requires
-   ContainerSessionBackend.
-
-3. **CORS is permissive in development.** `cors()` with no options allows all
+2. **CORS is permissive in development.** `cors()` with no options allows all
    origins. Production restricts to `CORS_ORIGIN` env var.
 
-4. **No CSRF protection.** The API relies entirely on Bearer tokens. Fine for
+3. **No CSRF protection.** The API relies entirely on Bearer tokens. Fine for
    API-only clients, but could be a concern if cookies are ever added.
 
-5. **Chat history is client-side only.** Messages in `localStorage` are not
+4. **Chat history is client-side only.** Messages in `localStorage` are not
    synced to the server. Clearing browser data loses history. The `conversations`
    table stores metadata only.
 
-6. **JWT tokens have no revocation.** Tokens are valid for 7 days. There's no
+5. **JWT tokens have no revocation.** Tokens are valid for 7 days. There's no
    server-side revocation list. Logout only clears the client-side token.

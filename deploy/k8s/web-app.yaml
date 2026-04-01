@@ -32,9 +32,7 @@ spec:
             - name: K8S_NAMESPACE
               value: goldilocks
             - name: AGENT_IMAGE
-              value: ghcr.io/sigilmakes/goldilocks-agent:latest
-            - name: SESSION_BACKEND
-              value: container  # "local" for dev, "container" for production
+              value: goldilocks-agent:latest
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:

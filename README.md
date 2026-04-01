@@ -27,6 +27,7 @@ Goldilocks pairs an AI chat assistant with domain-specific ML models to help com
 | Backend | Express 5, TypeScript, better-sqlite3, WebSocket (ws) |
 | Agent | [Pi SDK](https://github.com/mariozechner/pi-coding-agent) (`@mariozechner/pi-coding-agent`) |
 | Auth | JWT (jsonwebtoken), bcrypt, AES-256-GCM encrypted API key storage |
+| Orchestration | Kubernetes (`@kubernetes/client-node`), kind for local dev |
 | Visualization | 3Dmol.js, Mermaid |
 | Build | npm workspaces, multi-stage Docker |
 
@@ -36,6 +37,7 @@ Goldilocks pairs an AI chat assistant with domain-specific ML models to help com
 
 - Node.js ≥ 20
 - npm ≥ 10
+- Docker, [kind](https://kind.sigs.k8s.io/), kubectl
 - At least one LLM API key (Anthropic, OpenAI, or Google) for chat features
 
 ### Development
@@ -46,7 +48,11 @@ git clone <repo-url> goldilocks-app
 cd goldilocks-app
 npm install
 
+# One-time: create kind cluster + apply k8s manifests
+npm run k8s:setup
+
 # Start both frontend and backend in dev mode
+# (Express runs locally, agent pods run in kind)
 npm run dev
 ```
 
@@ -54,23 +60,18 @@ npm run dev
 - Backend: http://localhost:3000 (Express with tsx watch)
 
 The Vite dev server proxies `/api` and `/ws` requests to the backend automatically.
+Agent sessions always run in k8s pods — even in development.
 
-### Production (Docker)
+### Rebuild agent image
 
 ```bash
-cp .env.example .env
-# Edit .env — set JWT_SECRET, ENCRYPTION_KEY, and at least one API key
-
-docker compose up -d
+npm run k8s:build-agent
 ```
 
-The app is available at http://localhost:3000. The single Docker image serves both the API and the built frontend as static files.
-
-### Production (Manual)
+### Teardown
 
 ```bash
-npm run build          # Builds server (tsc) and frontend (vite)
-npm start              # Starts the Express server on port 3000
+npm run k8s:teardown
 ```
 
 ## Environment Variables
@@ -86,10 +87,10 @@ npm start              # Starts the Express server on port 3000
 | `ANTHROPIC_API_KEY` | No | — | Server-wide Anthropic API key (available to all users) |
 | `OPENAI_API_KEY` | No | — | Server-wide OpenAI API key |
 | `GOOGLE_API_KEY` | No | — | Server-wide Google API key |
-| `MAX_SESSIONS` | No | `20` | Maximum concurrent agent sessions |
-| `SESSION_IDLE_TIMEOUT_MS` | No | `300000` | Idle session eviction timeout (5 min default) |
-| `SESSION_BACKEND` | No | `local` | `local` (in-process) or `container` (Docker per-user) |
-| `AGENT_IMAGE` | No | `ghcr.io/.../goldilocks-agent:latest` | Container image for agent pods (container backend) |
+| `K8S_NAMESPACE` | No | `goldilocks` | k8s namespace for agent pods |
+| `AGENT_IMAGE` | No | `goldilocks-agent:latest` | Agent container image |
+| `AGENT_IDLE_TIMEOUT_MS` | No | `1800000` | Agent pod idle timeout (30min) |
+| `WORKSPACE_QUOTA_BYTES` | No | `1073741824` | Per-user workspace size (1GB) |
 
 ## Project Structure
 
@@ -119,12 +120,11 @@ goldilocks-app/
 │   ├── src/
 │   │   ├── agent/
 │   │   │   ├── session-backend.ts    # SessionBackend interface
-│   │   │   ├── local-backend.ts      # In-process Pi SDK sessions (dev)
-│   │   │   ├── container-backend.ts  # Docker container per session (prod)
-│   │   │   ├── sessions.ts           # Session cache + backend selection
-│   │   │   ├── websocket.ts          # WebSocket server + event mapping
-│   │   │   ├── pod-reaper.ts         # Orphaned container cleanup
-│   │   │   └── workspace-guard.ts    # Path traversal prevention
+│   │   │   ├── container-backend.ts  # k8s pod per session (via @kubernetes/client-node)
+│   │   │   ├── k8s-client.ts        # Shared KubeConfig/CoreV1Api singleton
+│   │   │   ├── sessions.ts          # Session cache (wraps k8s backend)
+│   │   │   ├── websocket.ts         # WebSocket server + event mapping
+│   │   │   └── workspace-guard.ts   # Path traversal prevention
 │   │   ├── auth/
 │   │   │   ├── routes.ts        # Register, login, refresh, me
 │   │   │   ├── middleware.ts    # JWT verification middleware
@@ -142,14 +142,29 @@ goldilocks-app/
 │   │   └── index.ts                  # Express app setup + server start
 │   └── package.json
 │
-├── skills/goldilocks/SKILL.md   # Pi agent skill (DFT domain knowledge)
-├── deploy/                      # Deployment configurations
-│   ├── docker/                  # Dockerfiles + docker-compose.prod.yaml
-│   ├── k8s/                     # Kubernetes manifests (namespace, RBAC, etc.)
+├── k8s/                         # Kubernetes manifests (primary deployment method)
+│   ├── namespace.yaml
+│   ├── rbac.yaml
+│   ├── network-policies.yaml
+│   ├── resource-quota.yaml
+│   ├── agent-pod-template.yaml  # Reference spec for agent pods
+│   ├── workspace-pvc-template.yaml  # Per-user workspace PVC
+│   ├── web-app.yaml
+│   ├── mcp-server.yaml
+│   ├── ingress.yaml
+│   └── secrets.yaml
+│
+├── deploy/                      # Deployment tooling
+│   ├── docker/                  # Dockerfiles for web, agent, MCP server
+│   ├── kind-config.yaml         # kind cluster config for local dev
+│   ├── setup-dev.sh             # One-command dev environment setup
+│   ├── teardown-dev.sh          # Tear down kind cluster
 │   └── README.md                # Deployment guide
+│
+├── shared/types.ts              # WebSocket message types (client + server)
+├── skills/goldilocks/SKILL.md   # Pi agent skill (DFT domain knowledge)
 ├── test/smoke-test.sh           # End-to-end smoke test
 ├── Dockerfile                   # Multi-stage production Docker build
-├── docker-compose.yml           # Development Docker Compose
 ├── .env.example                 # Environment variable template
 ├── AGENTS.md                    # Agent context for Pi SDK sessions
 └── package.json                 # npm workspace root
@@ -159,20 +174,17 @@ goldilocks-app/
 
 Goldilocks follows a three-panel workspace layout: **Sidebar** (conversations + structure library), **Chat** (agent interaction), and **Context** (structure viewer, parameters, files).
 
-The backend serves both the API and the built frontend. Agent sessions are managed via WebSocket — the client authenticates, opens a conversation, and sends prompts. The server creates a Pi SDK `AgentSession` scoped to the conversation's workspace directory, streams events back over the WebSocket as they happen.
+The backend serves both the API and the built frontend. Agent sessions are managed via WebSocket — the client authenticates, opens a conversation, and sends prompts. The server creates agent pods in Kubernetes, each running a Pi SDK session scoped to the conversation's workspace. Events stream back over the WebSocket as they happen.
 
-Two session backends are available:
-- **LocalSessionBackend** — Runs Pi SDK in-process. Simple, no isolation. Good for development and single-user deployments.
-- **ContainerSessionBackend** — Spawns a Docker container per session with filesystem/process/network isolation. Required for multi-user production deployments.
+**Kubernetes is the only way to run agent sessions.** Local dev uses `kind` (Kubernetes IN Docker), production uses a real cluster. The `ContainerSessionBackend` uses `@kubernetes/client-node` to create/delete/watch pods, with automatic kubeconfig detection (in-cluster service account or local `~/.kube/config`).
 
 For the full architecture diagram and detailed component documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Deployment
 
 See [deploy/README.md](deploy/README.md) for:
-- Docker Compose (development / single user)
-- k3s single node (prototyping)
-- Institutional Kubernetes cluster (production)
+- Local development with kind
+- Production Kubernetes deployment
 - Container image builds
 - Secret management
 
