@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Paperclip, Sparkles, Square, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useChatStore, type ChatMessage, type AssistantBlock, type ToolCall } from '../../store/chat';
 import { useConversationsStore } from '../../store/conversations';
@@ -11,10 +11,42 @@ import { ChatSkeleton } from '../ui/Skeleton';
 export default function ChatPanel() {
   const [message, setMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const { messages, isStreaming, currentText, currentThinking, activeTools } = useChatStore();
   const activeConversationId = useConversationsStore((s) => s.activeConversationId);
   const { send, abort, isReady, error } = useAgent(activeConversationId);
+
+  const handleFileAttach = useCallback(async (files: FileList | null) => {
+    if (!files || !activeConversationId) return;
+    const token = (await import('../../store/auth')).useAuthStore.getState().token;
+    for (const file of Array.from(files)) {
+      try {
+        // Read as base64 and upload
+        const content = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string).split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        await fetch(`/api/conversations/${activeConversationId}/upload`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ filename: file.name, content }),
+        });
+        // Mention the file in the chat
+        send(`I've uploaded ${file.name}`);
+      } catch (err) {
+        console.error('Upload failed:', err);
+      }
+    }
+    // Refresh files list
+    const filesStore = (await import('../../store/files')).useFilesStore.getState();
+    filesStore.fetch(activeConversationId);
+  }, [activeConversationId, send]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -91,11 +123,21 @@ export default function ChatPanel() {
       <div className="border-t border-slate-700 p-2 sm:p-4">
         <div className="max-w-3xl mx-auto flex items-end gap-1 sm:gap-2">
           <button
-            className="p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!isReady || !activeConversationId}
+            className="p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
             title="Attach file"
           >
             <Paperclip className="w-5 h-5" />
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".cif,.poscar,.vasp,.xyz,.pdb,.json,.txt,.in,.out"
+            className="hidden"
+            onChange={(e) => handleFileAttach(e.target.files)}
+          />
           
           <div className="flex-1 relative">
             <textarea

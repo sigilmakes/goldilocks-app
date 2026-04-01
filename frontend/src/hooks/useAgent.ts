@@ -152,6 +152,9 @@ export function useAgent(conversationId: string | null) {
       return;
     }
     ws.current.send(JSON.stringify({ type: 'abort' }));
+    // Immediately update UI so the user sees the stop take effect
+    const store = useChatStore.getState();
+    store.endAgent();
   }, []);
 
   return {
