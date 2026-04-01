@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Box, Settings2, Files, Upload, Download, Trash2, Loader2, FileText } from 'lucide-react';
+import { Box, Settings2, Files, Upload, Download, Trash2, Loader2, FileText, Zap } from 'lucide-react';
 import { useConversationsStore } from '../../store/conversations';
 import { useFilesStore, type WorkspaceFile } from '../../store/files';
+import { useContextStore } from '../../store/context';
+import { api } from '../../api/client';
+import StructureViewer from '../science/StructureViewer';
+import PredictionSummary from '../science/PredictionSummary';
 
 type Tab = 'structure' | 'parameters' | 'files';
 
@@ -37,7 +41,7 @@ export default function ContextPanel() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'structure' && <StructureTab />}
+        {activeTab === 'structure' && <StructureTab conversationId={activeConversationId} />}
         {activeTab === 'parameters' && <ParametersTab />}
         {activeTab === 'files' && <FilesTab conversationId={activeConversationId} />}
       </div>
@@ -45,37 +49,113 @@ export default function ContextPanel() {
   );
 }
 
-function StructureTab() {
+function StructureTab({ conversationId }: { conversationId: string | null }) {
+  const [cifData, setCifData] = useState<string | null>(null);
+  const structure = useContextStore((s) => s.structure);
+  const files = useFilesStore((s) => s.files);
+
+  // Load CIF data from workspace files
+  useEffect(() => {
+    if (!conversationId) {
+      setCifData(null);
+      return;
+    }
+    const cifFile = files.find((f) => f.name.toLowerCase().endsWith('.cif'));
+    if (cifFile) {
+      fetch(`/api/conversations/${conversationId}/files/${cifFile.name}`)
+        .then((res) => res.text())
+        .then((text) => setCifData(text))
+        .catch(() => setCifData(null));
+    } else {
+      setCifData(null);
+    }
+  }, [conversationId, files]);
+
   return (
     <div className="space-y-4">
-      {/* 3D viewer placeholder */}
-      <div className="aspect-square bg-slate-700 rounded-lg flex items-center justify-center border border-slate-600 border-dashed">
-        <div className="text-center text-slate-400">
-          <Box className="w-12 h-12 mx-auto mb-2 opacity-50" />
-          <p className="text-sm">No structure loaded</p>
-          <p className="text-xs mt-1">Upload a CIF file to visualize</p>
-        </div>
-      </div>
+      {/* 3D viewer */}
+      <StructureViewer cifData={cifData} />
 
-      {/* Structure info placeholder */}
-      <div className="bg-slate-700/50 rounded-lg p-3">
-        <h3 className="text-sm font-medium text-white mb-2">Structure Info</h3>
-        <p className="text-sm text-slate-400">No structure selected</p>
-      </div>
+      {/* Structure info */}
+      {structure ? (
+        <div className="bg-slate-700/50 rounded-lg p-3">
+          <h3 className="text-sm font-medium text-white mb-2">Structure Info</h3>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <span className="text-slate-400">Formula</span>
+            <span className="text-white font-medium">{structure.formula}</span>
+            <span className="text-slate-400">Space group</span>
+            <span className="text-white">{structure.spacegroup} (#{structure.spacegroupNumber})</span>
+            <span className="text-slate-400">Lattice</span>
+            <span className="text-white">{structure.latticeSystem}</span>
+            <span className="text-slate-400">a, b, c</span>
+            <span className="text-white">{structure.a.toFixed(3)}, {structure.b.toFixed(3)}, {structure.c.toFixed(3)} Å</span>
+            <span className="text-slate-400">Volume</span>
+            <span className="text-white">{structure.volume.toFixed(2)} ų</span>
+            <span className="text-slate-400">Atoms</span>
+            <span className="text-white">{structure.natoms}</span>
+            <span className="text-slate-400">Density</span>
+            <span className="text-white">{structure.density.toFixed(3)} g/cm³</span>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-slate-700/50 rounded-lg p-3">
+          <h3 className="text-sm font-medium text-white mb-2">Structure Info</h3>
+          <p className="text-sm text-slate-400">No structure selected</p>
+        </div>
+      )}
+
+      {/* Prediction summary */}
+      <PredictionSummary />
     </div>
   );
 }
 
 function ParametersTab() {
+  const {
+    functional, pseudoMode, mlModel, confidence, structure,
+    setFunctional, setPseudoMode, setMlModel, setConfidence, setPrediction,
+  } = useContextStore();
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleQuickGenerate = async () => {
+    if (!structure) return;
+    setIsGenerating(true);
+    try {
+      const predictRes = await api.post<{ prediction: unknown }>('/predict', {
+        filePath: structure.filePath,
+        model: mlModel,
+        confidence,
+      });
+      if (predictRes.prediction) {
+        setPrediction(predictRes.prediction as import('../../store/context').PredictionResult);
+      }
+      await api.post('/generate', {
+        filePath: structure.filePath,
+        functional,
+        pseudoMode,
+        model: mlModel,
+        confidence,
+      });
+    } catch (err) {
+      console.error('Quick generate failed:', err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div>
         <label className="block text-sm font-medium text-slate-300 mb-1.5">
           Functional
         </label>
-        <select className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
-          <option value="pbesol">PBEsol</option>
-          <option value="pbe">PBE</option>
+        <select
+          value={functional}
+          onChange={(e) => setFunctional(e.target.value as 'PBEsol' | 'PBE')}
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          <option value="PBEsol">PBEsol</option>
+          <option value="PBE">PBE</option>
         </select>
       </div>
 
@@ -83,7 +163,11 @@ function ParametersTab() {
         <label className="block text-sm font-medium text-slate-300 mb-1.5">
           Pseudopotential Mode
         </label>
-        <select className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+        <select
+          value={pseudoMode}
+          onChange={(e) => setPseudoMode(e.target.value as 'efficiency' | 'precision')}
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
           <option value="efficiency">Efficiency</option>
           <option value="precision">Precision</option>
         </select>
@@ -93,9 +177,13 @@ function ParametersTab() {
         <label className="block text-sm font-medium text-slate-300 mb-1.5">
           ML Model
         </label>
-        <select className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
-          <option value="alignn">ALIGNN (More accurate)</option>
-          <option value="rf">Random Forest (Faster)</option>
+        <select
+          value={mlModel}
+          onChange={(e) => setMlModel(e.target.value as 'ALIGNN' | 'RF')}
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          <option value="ALIGNN">ALIGNN (More accurate)</option>
+          <option value="RF">Random Forest (Faster)</option>
         </select>
       </div>
 
@@ -103,7 +191,11 @@ function ParametersTab() {
         <label className="block text-sm font-medium text-slate-300 mb-1.5">
           Confidence Level
         </label>
-        <select className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+        <select
+          value={String(confidence)}
+          onChange={(e) => setConfidence(Number(e.target.value))}
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
           <option value="0.95">95% (Conservative)</option>
           <option value="0.90">90%</option>
           <option value="0.85">85%</option>
@@ -111,14 +203,21 @@ function ParametersTab() {
       </div>
 
       <button
-        disabled
-        className="w-full py-2 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-600 disabled:text-slate-400 text-white font-medium rounded-lg transition-colors"
+        disabled={!structure || isGenerating}
+        onClick={handleQuickGenerate}
+        className="w-full py-2 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-600 disabled:text-slate-400 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
       >
-        Quick Generate
+        {isGenerating ? (
+          <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
+        ) : (
+          <><Zap className="w-4 h-4" /> Quick Generate</>
+        )}
       </button>
-      <p className="text-xs text-slate-500 text-center">
-        Load a structure to enable quick generation
-      </p>
+      {!structure && (
+        <p className="text-xs text-slate-500 text-center">
+          Load a structure to enable quick generation
+        </p>
+      )}
     </div>
   );
 }
