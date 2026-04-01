@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Maximize2 } from 'lucide-react';
 
-// @ts-ignore — 3Dmol has no type declarations
-import $3Dmol from '3dmol';
+// 3Dmol exports named functions, not a default export
+import * as $3Dmol from '3dmol';
 
 type ViewStyle = 'ball-stick' | 'spacefill' | 'wireframe' | 'stick';
 
