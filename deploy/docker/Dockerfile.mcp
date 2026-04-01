@@ -1,0 +1,39 @@
+# MCP Server container — science backend + HPC gateway
+# Heavy image: Python + PyTorch + pymatgen for ML inference
+# Also handles Slurm job submission/monitoring via SSH
+
+FROM python:3.12-slim AS base
+
+# System deps for pymatgen and SSH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-client \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -g 1000 mcp && useradd -u 1000 -g mcp -m -s /bin/bash mcp
+
+# Install Python dependencies
+# Note: goldilocks package is NOT modified — we install it as-is
+COPY requirements-mcp.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements-mcp.txt
+
+# Copy the MCP server code
+# This comes from the goldilocks-mcp repo
+COPY goldilocks-mcp/ /app/goldilocks-mcp/
+WORKDIR /app/goldilocks-mcp
+
+# Model cache directory
+RUN mkdir -p /models && chown mcp:mcp /models
+
+# SSH directory for HPC access
+RUN mkdir -p /home/mcp/.ssh && chown mcp:mcp /home/mcp/.ssh && chmod 700 /home/mcp/.ssh
+
+USER mcp
+
+ENV HF_HOME=/models
+ENV MCP_PORT=3100
+
+EXPOSE 3100
+
+CMD ["python", "-m", "goldilocks_mcp.server", "--port", "3100"]

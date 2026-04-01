@@ -1,0 +1,42 @@
+# Production-like Docker Compose for local testing
+# Simulates the k8s architecture with separate containers
+#
+# Usage:
+#   docker compose -f deploy/docker/docker-compose.prod.yaml up --build
+
+services:
+  web-app:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.web
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - SESSION_BACKEND=local  # Use 'container' when k8s is available
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-encryption-key-32-bytes!!!}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - app-data:/data
+    restart: unless-stopped
+    depends_on:
+      mcp-server:
+        condition: service_started
+
+  mcp-server:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.mcp
+    environment:
+      - MCP_PORT=3100
+      - HF_HOME=/models
+    volumes:
+      - model-cache:/models
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  model-cache:

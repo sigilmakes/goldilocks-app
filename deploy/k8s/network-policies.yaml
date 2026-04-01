@@ -1,0 +1,169 @@
+# Network Policies for Goldilocks namespace
+# Requires a CNI that supports NetworkPolicy (Calico, Cilium, etc.)
+
+---
+# Agent pods: can ONLY reach MCP server. No internet, no HPC direct, no other pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-isolation
+  namespace: goldilocks
+spec:
+  podSelector:
+    matchLabels:
+      role: agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Accept traffic from the web app (for WebSocket proxy)
+    - from:
+        - podSelector:
+            matchLabels:
+              role: frontend
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    # DNS resolution
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # MCP server only — all tools go through here
+    - to:
+        - podSelector:
+            matchLabels:
+              role: science
+      ports:
+        - port: 3100
+          protocol: TCP
+    # Callback to web app (status updates)
+    - to:
+        - podSelector:
+            matchLabels:
+              role: frontend
+      ports:
+        - port: 3000
+          protocol: TCP
+
+---
+# MCP server: can reach HPC cluster (SSH) and web app
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-server-policy
+  namespace: goldilocks
+spec:
+  podSelector:
+    matchLabels:
+      role: science
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Accept traffic from agent pods
+    - from:
+        - podSelector:
+            matchLabels:
+              role: agent
+      ports:
+        - port: 3100
+          protocol: TCP
+    # Accept traffic from web app (health checks)
+    - from:
+        - podSelector:
+            matchLabels:
+              role: frontend
+      ports:
+        - port: 3100
+          protocol: TCP
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # SSH to HPC cluster — replace CIDR with actual HPC IP range
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0  # TODO: restrict to HPC cluster IP
+      ports:
+        - port: 22
+          protocol: TCP
+
+---
+# Web app: can reach everything it needs
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-app-policy
+  namespace: goldilocks
+spec:
+  podSelector:
+    matchLabels:
+      role: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # External traffic (via ingress controller)
+    - ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Agent pods
+    - to:
+        - podSelector:
+            matchLabels:
+              role: agent
+      ports:
+        - port: 8080
+          protocol: TCP
+    # MCP server
+    - to:
+        - podSelector:
+            matchLabels:
+              role: science
+      ports:
+        - port: 3100
+          protocol: TCP
+    # k8s API (for pod management)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0  # TODO: restrict to k8s API server IP
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # External APIs (Claude API, model providers)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
