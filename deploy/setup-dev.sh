@@ -76,8 +76,8 @@ kubectl apply -f "$K8S_DIR/network-policies.yaml"
 echo "Applying resource quota..."
 kubectl apply -f "$K8S_DIR/resource-quota.yaml"
 
-echo "Applying workspace PVC template..."
-kubectl apply -f "$K8S_DIR/workspace-pvc-template.yaml"
+# workspace-pvc-template.yaml is a reference template, not directly applied.
+# PVCs are created dynamically by ContainerSessionBackend per user.
 
 echo ""
 echo "=== Dev environment ready ==="

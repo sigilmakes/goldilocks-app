@@ -4,21 +4,21 @@
 
 FROM node:22-alpine AS base
 
-# Create non-root user
-RUN addgroup -g 1000 agent && adduser -u 1000 -G agent -s /bin/sh -D agent
+# node:22-alpine already has user 'node' (uid 1000, gid 1000)
+# Use that as our non-root agent user
 
 # Install pi SDK globally
 RUN npm install -g @mariozechner/pi-coding-agent
 
-# Create workspace directories
-RUN mkdir -p /work /tmp/pi-session && chown -R agent:agent /work /tmp/pi-session
+# Create workspace directories owned by node user
+RUN mkdir -p /work /tmp/pi-session && chown -R node:node /work /tmp/pi-session
 
 # Copy the goldilocks skill doc
-COPY skills/ /home/agent/skills/
-COPY AGENTS.md /home/agent/AGENTS.md
-RUN chown -R agent:agent /home/agent
+COPY skills/ /home/node/skills/
+COPY AGENTS.md /home/node/AGENTS.md
+RUN chown -R node:node /home/node
 
-USER agent
+USER node
 WORKDIR /work
 
 # The agent process is started by the web app when proxying a session.
@@ -27,11 +27,9 @@ WORKDIR /work
 #
 # Environment variables set by the web app at pod creation:
 #   USER_ID, SESSION_ID, WEB_APP_URL, MCP_SERVER_URL
-#
-# The entrypoint script initializes the Pi session and starts listening.
-COPY --chown=agent:agent deploy/docker/agent-entrypoint.sh /home/agent/entrypoint.sh
-RUN chmod +x /home/agent/entrypoint.sh
+COPY --chown=node:node deploy/docker/agent-entrypoint.sh /home/node/entrypoint.sh
+RUN chmod +x /home/node/entrypoint.sh
 
 EXPOSE 8080
 
-ENTRYPOINT ["/home/agent/entrypoint.sh"]
+ENTRYPOINT ["/home/node/entrypoint.sh"]
