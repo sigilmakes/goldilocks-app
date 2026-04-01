@@ -91,13 +91,13 @@ graph TD
     WSHandler["websocket.ts"]
     Cache["sessionCache<br/><small>sessions.ts</small>"]
     Backend["SessionBackend<br/><small>interface</small>"]
-    Local["LocalSessionBackend<br/><small>local-backend.ts</small>"]
     Container["ContainerSessionBackend<br/><small>container-backend.ts</small>"]
+    K8s["k8s-client.ts<br/><small>CoreV1Api singleton</small>"]
 
     WSHandler -->|"getOrCreate()"| Cache
     Cache --> Backend
-    Backend --> Local
     Backend --> Container
+    Container --> K8s
 ```
 
 ### Interface — `session-backend.ts`
@@ -111,18 +111,18 @@ interface SessionBackend {
 }
 
 interface SessionHandle {
-  session: AgentSession;     // Pi SDK session object
-  workspacePath: string;     // /data/workspaces/<userId>/<convId>/workspace
-  sessionPath: string;       // /data/workspaces/<userId>/<convId>/pi-session
+  session: AgentSession;     // Pi SDK session object (proxy for container backend)
+  workspacePath: string;     // /work (inside the agent pod)
+  sessionPath: string;       // /tmp/pi-session (inside the agent pod)
 }
 ```
 
 ### `sessionCache` Wrapper — `sessions.ts`
 
 The `sessionCache` in `sessions.ts` is a thin compatibility wrapper that
-selects the backend based on `SESSION_BACKEND` env var and provides a
-simplified API that returns `AgentSession` directly (the WebSocket layer
-only needs the session object):
+instantiates the `ContainerSessionBackend` and provides a simplified API
+that returns `AgentSession` directly (the WebSocket layer only needs the
+session object):
 
 ```ts
 const sessionCache = {

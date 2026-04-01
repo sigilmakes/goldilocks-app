@@ -201,6 +201,9 @@ environment variables with typed defaults:
 | `encryptionKey` | `ENCRYPTION_KEY` | dev fallback | **Throws in production if unset** |
 | `maxSessions` | `MAX_SESSIONS` | `20` | |
 | `sessionIdleTimeoutMs` | `SESSION_IDLE_TIMEOUT_MS` | `300000` (5 min) | |
+| `k8sNamespace` | `K8S_NAMESPACE` | `goldilocks` | Kubernetes namespace for agent pods |
+| `agentImage` | `AGENT_IMAGE` | — | Container image for agent pods |
+| `agentIdleTimeoutMs` | `AGENT_IDLE_TIMEOUT_MS` | `300000` (5 min) | Idle timeout before agent pod is deleted |
 | `anthropicApiKey` | `ANTHROPIC_API_KEY` | — | Server-wide key |
 | `openaiApiKey` | `OPENAI_API_KEY` | — | Server-wide key |
 | `googleApiKey` | `GOOGLE_API_KEY` | — | Server-wide key |

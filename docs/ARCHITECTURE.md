@@ -36,11 +36,9 @@ graph TB
         WSS --> SessionMgr["Session Manager"]
     end
 
-    SessionMgr --> Local["LocalSessionBackend<br/><small>in-process Pi SDK</small>"]
-    SessionMgr --> Container["ContainerSessionBackend<br/><small>Docker per user</small>"]
+    SessionMgr --> Container["ContainerSessionBackend<br/><small>k8s pod per user</small>"]
 
-    Local --> PiSDK["Pi SDK AgentSession"]
-    Container --> AgentPod["Agent Container<br/><small>isolated Pi SDK</small>"]
+    Container --> AgentPod["Agent Pod<br/><small>isolated Pi SDK</small>"]
 ```
 
 ## The Request Path (End to End)
