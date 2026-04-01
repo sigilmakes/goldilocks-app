@@ -26,9 +26,6 @@ export function useAgent(conversationId: string | null) {
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
 
-  // Get store actions once - they're stable
-  const chatStore = useChatStore();
-
   useEffect(() => {
     if (!conversationId || !token) {
       setIsConnected(false);
@@ -36,8 +33,7 @@ export function useAgent(conversationId: string | null) {
       return;
     }
 
-    // Clear messages when switching conversations
-    chatStore.clearMessages();
+    // Don't clear messages — Sidebar.loadConversation() handles that
     setIsReady(false);
     setError(null);
 

@@ -18,14 +18,53 @@ export type ChatMessage =
   | { role: 'user'; text: string; files?: string[]; timestamp: number }
   | { role: 'assistant'; blocks: AssistantBlock[]; timestamp: number };
 
+// --- localStorage persistence helpers ---
+
+const STORAGE_KEY = 'goldilocks-chat-history';
+const MAX_STORED_CONVERSATIONS = 50;
+
+function loadHistory(): Record<string, ChatMessage[]> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* corrupt data, start fresh */ }
+  return {};
+}
+
+function saveHistory(history: Record<string, ChatMessage[]>) {
+  try {
+    // Prune oldest conversations if we exceed the limit
+    const keys = Object.keys(history);
+    if (keys.length > MAX_STORED_CONVERSATIONS) {
+      // Find oldest by most recent message timestamp
+      const sorted = keys.sort((a, b) => {
+        const aLast = history[a]?.[history[a].length - 1]?.timestamp ?? 0;
+        const bLast = history[b]?.[history[b].length - 1]?.timestamp ?? 0;
+        return aLast - bLast;
+      });
+      for (let i = 0; i < sorted.length - MAX_STORED_CONVERSATIONS; i++) {
+        delete history[sorted[i]];
+      }
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  } catch { /* storage full or unavailable */ }
+}
+
+// ---
+
 interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
   currentText: string;
   currentThinking: string;
   activeTools: Map<string, ToolCall>;
-  
+
+  /** The conversation ID whose messages are currently loaded */
+  activeConversationId: string | null;
+
   // Actions
+  /** Load messages for a conversation (from localStorage cache) */
+  loadConversation: (conversationId: string | null) => void;
   addUserMessage: (text: string, files?: string[]) => void;
   startAssistantMessage: () => void;
   appendTextDelta: (delta: string) => void;
@@ -37,6 +76,20 @@ interface ChatState {
   endAgent: () => void;
   clearMessages: () => void;
   setStreaming: (streaming: boolean) => void;
+  /** Delete stored history for a conversation */
+  deleteConversationHistory: (conversationId: string) => void;
+}
+
+/** Persist current messages to localStorage for the active conversation */
+function persistMessages(conversationId: string | null, messages: ChatMessage[]) {
+  if (!conversationId) return;
+  const history = loadHistory();
+  if (messages.length === 0) {
+    delete history[conversationId];
+  } else {
+    history[conversationId] = messages;
+  }
+  saveHistory(history);
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -45,14 +98,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentText: '',
   currentThinking: '',
   activeTools: new Map(),
+  activeConversationId: null,
+
+  loadConversation: (conversationId) => {
+    // Save current conversation's messages first
+    const state = get();
+    if (state.activeConversationId && state.messages.length > 0) {
+      persistMessages(state.activeConversationId, state.messages);
+    }
+
+    if (!conversationId) {
+      set({
+        messages: [],
+        isStreaming: false,
+        currentText: '',
+        currentThinking: '',
+        activeTools: new Map(),
+        activeConversationId: null,
+      });
+      return;
+    }
+
+    // Load from localStorage
+    const history = loadHistory();
+    const stored = history[conversationId] ?? [];
+
+    set({
+      messages: stored,
+      isStreaming: false,
+      currentText: '',
+      currentThinking: '',
+      activeTools: new Map(),
+      activeConversationId: conversationId,
+    });
+  },
 
   addUserMessage: (text, files) => {
-    set((state) => ({
-      messages: [
+    set((state) => {
+      const newMessages = [
         ...state.messages,
-        { role: 'user', text, files, timestamp: Date.now() },
-      ],
-    }));
+        { role: 'user' as const, text, files, timestamp: Date.now() },
+      ];
+      // Persist after adding
+      persistMessages(state.activeConversationId, newMessages);
+      return { messages: newMessages };
+    });
   },
 
   startAssistantMessage: () => {
@@ -89,13 +179,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall: (toolCallId, _content) => {
-    // Could show streaming output from tools
-    const state = get();
-    const tool = state.activeTools.get(toolCallId);
-    if (tool) {
-      // For now, just keep it as-is
-    }
+  updateToolCall: (_toolCallId, _content) => {
+    // Could show streaming output from tools — no-op for now
   },
 
   endToolCall: (toolCallId, result, isError) => {
@@ -115,40 +200,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   endMessage: () => {
-    // Finalize the current assistant message
     const state = get();
     const blocks: AssistantBlock[] = [];
 
-    // Add thinking if present
     if (state.currentThinking) {
       blocks.push({ type: 'thinking', content: state.currentThinking });
     }
-
-    // Add text if present
     if (state.currentText) {
       blocks.push({ type: 'text', content: state.currentText });
     }
-
-    // Add tool calls
     for (const tool of state.activeTools.values()) {
       blocks.push({ type: 'tool_call', data: tool });
     }
 
     if (blocks.length > 0) {
-      set((state) => ({
-        messages: [
+      set((state) => {
+        const newMessages = [
           ...state.messages,
-          { role: 'assistant', blocks, timestamp: Date.now() },
-        ],
-        currentText: '',
-        currentThinking: '',
-        activeTools: new Map(),
-      }));
+          { role: 'assistant' as const, blocks, timestamp: Date.now() },
+        ];
+        // Persist after completing a message
+        persistMessages(state.activeConversationId, newMessages);
+        return {
+          messages: newMessages,
+          currentText: '',
+          currentThinking: '',
+          activeTools: new Map(),
+        };
+      });
     }
   },
 
   endAgent: () => {
-    // Ensure any remaining content is captured
     const state = get();
     if (state.currentText || state.currentThinking || state.activeTools.size > 0) {
       state.endMessage();
@@ -157,6 +240,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: () => {
+    const state = get();
+    persistMessages(state.activeConversationId, []);
     set({
       messages: [],
       isStreaming: false,
@@ -167,4 +252,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setStreaming: (streaming) => set({ isStreaming: streaming }),
+
+  deleteConversationHistory: (conversationId) => {
+    const history = loadHistory();
+    delete history[conversationId];
+    saveHistory(history);
+  },
 }));

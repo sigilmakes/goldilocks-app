@@ -19,7 +19,8 @@ export default function Sidebar() {
     setActive,
   } = useConversationsStore();
   
-  const clearMessages = useChatStore((s) => s.clearMessages);
+  const loadConversation = useChatStore((s) => s.loadConversation);
+  const deleteConversationHistory = useChatStore((s) => s.deleteConversationHistory);
   const clearFiles = useFilesStore((s) => s.clear);
 
   // Fetch conversations on mount
@@ -31,9 +32,9 @@ export default function Sidebar() {
 
   const handleNewConversation = async () => {
     try {
-      clearMessages();
+      const conv = await create();
+      loadConversation(conv.id);
       clearFiles();
-      await create();
       addToast('Conversation created', 'success');
     } catch (err) {
       console.error('Failed to create conversation:', err);
@@ -43,7 +44,7 @@ export default function Sidebar() {
 
   const handleSelectConversation = (id: string) => {
     if (id !== activeConversationId) {
-      clearMessages();
+      loadConversation(id);
       clearFiles();
       setActive(id);
     }
@@ -54,6 +55,7 @@ export default function Sidebar() {
     if (confirm('Delete this conversation?')) {
       try {
         await remove(id);
+        deleteConversationHistory(id);
         addToast('Conversation deleted', 'success');
       } catch (err) {
         console.error('Failed to delete conversation:', err);
