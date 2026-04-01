@@ -65,7 +65,8 @@ if (existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
   
   // SPA fallback - serve index.html for all non-API routes
-  app.get('*', (req, res, next) => {
+  // Express 5 requires named parameters for catch-all routes
+  app.get('/{*splat}', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/ws')) {
       return next();
     }
