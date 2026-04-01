@@ -20,13 +20,15 @@ spec:
       serviceAccountName: agent-manager
       containers:
         - name: web-app
-          image: ghcr.io/sigilmakes/goldilocks-web:latest
+          image: goldilocks-web
           ports:
             - containerPort: 3000
               name: http
+            - containerPort: 5173
+              name: vite
           env:
             - name: NODE_ENV
-              value: production
+              value: development
             - name: PORT
               value: "3000"
             - name: K8S_NAMESPACE
@@ -88,6 +90,9 @@ spec:
     - port: 3000
       targetPort: 3000
       name: http
+    - port: 5173
+      targetPort: 5173
+      name: vite
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
