@@ -56,7 +56,7 @@ export default function ChatPanel() {
                 <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
                   <Sparkles className="w-4 h-4 text-amber-500" />
                 </div>
-                <div className="flex-1 space-y-2">
+                <div className="flex-1 min-w-0 space-y-2">
                   {currentThinking && (
                     <ThinkingBlock content={currentThinking} />
                   )}
@@ -65,7 +65,7 @@ export default function ChatPanel() {
                   )}
                   {Array.from(activeTools.values()).map((tool) => (
                     <ToolCallCard key={tool.toolCallId} tool={tool} />
-                  ))}
+                  ))
                   {!currentText && !currentThinking && activeTools.size === 0 && (
                     <div className="flex items-center gap-2 text-slate-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -248,7 +248,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
         <Sparkles className="w-4 h-4 text-amber-500" />
       </div>
-      <div className="flex-1 space-y-2">
+      <div className="flex-1 min-w-0 space-y-2">
         {message.blocks.map((block, i) => (
           <AssistantBlockRenderer key={i} block={block} />
         ))}
@@ -439,10 +439,10 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
         )}
       </button>
       {expanded && (
-        <div className="px-3 py-2 space-y-2 bg-slate-800/50">
-          <div>
+        <div className="px-3 py-2 space-y-2 bg-slate-800/50 overflow-hidden">
+          <div className="min-w-0">
             <div className="text-xs text-slate-500 mb-1">Arguments</div>
-            <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto">
+            <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-w-full">
               {JSON.stringify(tool.args, null, 2)}
             </pre>
           </div>
