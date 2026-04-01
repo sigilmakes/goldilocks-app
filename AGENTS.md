@@ -8,19 +8,25 @@ materials scientists set up DFT calculations through a conversational interface.
 ## Running Dev
 
 ```bash
-npm install          # installs both frontend + server workspaces
-npm run k8s:setup    # one-time: create kind cluster + apply k8s manifests
-npm run dev          # starts Vite (5173) + Express (3000) concurrently
+npm install                   # install both frontend + server workspaces
+bash deploy/setup-dev.sh      # one-time: create kind cluster
+tilt up                       # everything starts — web app, agents, infra
 ```
 
-Vite proxies `/api` and `/ws` to port 3000. You need at least one LLM API key
-set as an env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY`).
+- Frontend: http://localhost:5173 (Vite HMR via Tilt port-forward)
+- Backend: http://localhost:3000 (Express via Tilt port-forward)
+- Tilt dashboard: http://localhost:10350
 
-Agent sessions always run in k8s pods (kind cluster for local dev).
-Rebuild agent image: `npm run k8s:build-agent`
-Tear down: `npm run k8s:teardown`
+Everything runs in kind. Tilt handles image builds, manifest application,
+file syncs (live_update), and port-forwarding. No local servers.
 
-Type checking (both workspaces): `npm run typecheck`
+Edit frontend source → Tilt syncs → Vite HMR in browser (sub-second).
+Edit server source → Tilt syncs → tsx restarts (1-2s).
+Edit agent files → Tilt rebuilds agent image (next pod gets it).
+
+Teardown: `tilt down` (stop services) or `kind delete cluster --name goldilocks` (nuke cluster).
+
+Type checking: `npm run typecheck`
 Build: `npm run build`
 Smoke test: `npm run build && bash test/smoke-test.sh`
 
@@ -75,10 +81,13 @@ goldilocks-app/
 ├── shared/
 │   └── types.ts                    WebSocket message types (ClientMessage, ServerMessage) used by both
 │
+├── Tiltfile                        Dev orchestration: builds, live_update syncs, port-forwards
+├── k8s/                            Kubernetes manifests (namespace, RBAC, web-app, etc.)
+├── deploy/
+│   ├── docker/                     Dockerfiles: web (prod), web.dev (dev), agent, MCP
+│   ├── kind-config.yaml            kind cluster config
+│   └── setup-dev.sh                One-time cluster setup
 ├── skills/goldilocks/SKILL.md      Pi agent skill definition (DFT domain knowledge)
-├── deploy/                         Docker + k8s deployment configs
-│   ├── docker/                     Dockerfiles for web, agent, MCP server
-│   └── k8s/                        Namespace, RBAC, network policies, pod templates, ingress
 ├── test/smoke-test.sh              E2E test: starts server, registers user, hits all endpoints
 ├── Dockerfile                      Multi-stage production build (single image: API + frontend)
 └── package.json                    npm workspace root
@@ -100,11 +109,6 @@ export const useAuthStore = create<AuthState>()(
 );
 ```
 
-Stores are accessed in components via selectors for minimal re-renders:
-`const token = useAuthStore((s) => s.token);`
-
-Actions are called directly: `useAuthStore.getState().login(email, password)`
-
 | Store | Persistence | Holds |
 |-------|-------------|-------|
 | `auth` | localStorage (token) | User, token, login/register/logout |
@@ -121,16 +125,13 @@ Actions are called directly: `useAuthStore.getState().login(email, password)`
 Every route file follows the same pattern:
 
 ```ts
-// server/src/<domain>/routes.ts
 const router = Router();
-router.use(verifyToken);     // All routes require JWT
+router.use(verifyToken);
 router.get('/', (req: AuthRequest, res) => { ... });
 export default router;
 ```
 
 Registered in `server/src/index.ts`: `app.use('/api/<path>', router)`
-
-The `AuthRequest` type extends Express `Request` with `user?: { id, email }`.
 
 ### WebSocket Protocol
 
@@ -142,185 +143,28 @@ Client                          Server
   │                               │
   ├── { type: 'auth', token } ──→ │  JWT verify
   │ ←── { type: 'auth_ok' } ─────┤
-  │                               │
   ├── { type: 'open', convId } ──→│  sessionCache.getOrCreate()
   │ ←── { type: 'ready' } ───────┤
-  │                               │
   ├── { type: 'prompt', text } ──→│  session.prompt(text)
-  │ ←── thinking_delta* ─────────┤  Pi SDK events mapped to WS messages
+  │ ←── thinking_delta* ─────────┤
   │ ←── text_delta* ─────────────┤
   │ ←── tool_start ──────────────┤
-  │ ←── tool_update* ────────────┤
   │ ←── tool_end ─────────────────┤
-  │ ←── message_end ──────────────┤  (may loop: more text_delta/tool cycles)
-  │ ←── agent_end ────────────────┤  Agent done, ready for next prompt
-  │                               │
+  │ ←── agent_end ────────────────┤
   ├── { type: 'abort' } ────────→ │  session.abort()
 ```
 
-One prompt at a time. `isProcessing` flag prevents concurrent prompts.
-Opening a new conversation on the same WS cleanly tears down the previous session subscription.
-The `useAgent` hook uses a generation counter to discard events from stale connections after rapid conversation switches.
+### SessionBackend
 
-### SessionBackend Abstraction
+There is only one backend — `ContainerSessionBackend` creates k8s pods per
+session via `@kubernetes/client-node`. Pods run with read-only rootfs, non-root
+user, all caps dropped, 512Mi memory limit. Idle pods are evicted after 30
+minutes (configurable via `AGENT_IDLE_TIMEOUT_MS`).
 
-`server/src/agent/session-backend.ts` defines the interface:
+## Known Quirks
 
-```ts
-interface SessionBackend {
-  getOrCreate(userId, conversationId): Promise<SessionHandle>;
-  touch(userId, conversationId): void;    // Reset idle timeout
-  dispose(userId, conversationId): void;  // Tear down session
-  shutdown(): void;                       // Clean up all (server exit)
-}
-```
-
-**ContainerSessionBackend** (`container-backend.ts`): Creates k8s pods per session
-via `@kubernetes/client-node`. Pods run with read-only rootfs, non-root user,
-all caps dropped, 512Mi memory limit. Each user gets a PVC for workspace
-persistence. Idle pods are evicted after 30 minutes (configurable via
-`AGENT_IDLE_TIMEOUT_MS`). In-cluster: direct pod IP WebSocket. Out-of-cluster:
-k8s PortForward API tunnel.
-
-There is only one backend — k8s is the only way to run agent sessions.
-
-## How To: Add a New API Route
-
-1. Create `server/src/<domain>/routes.ts`:
-   ```ts
-   import { Router, Response } from 'express';
-   import { verifyToken, AuthRequest } from '../auth/middleware.js';
-
-   const router = Router();
-   router.use(verifyToken);
-
-   router.get('/', (req: AuthRequest, res: Response) => {
-     const userId = req.user!.id;
-     res.json({ data: [] });
-   });
-
-   export default router;
-   ```
-
-2. Register in `server/src/index.ts`:
-   ```ts
-   import myRoutes from './<domain>/routes.js';
-   app.use('/api/<path>', myRoutes);
-   ```
-
-3. Call from frontend using `api` client (`frontend/src/api/client.ts`):
-   ```ts
-   import { api } from '../api/client';
-   const data = await api.get<MyType>('/my-endpoint');
-   ```
-
-## How To: Add a New Tool Result Card in Chat
-
-When the agent calls `bash` with a `goldilocks` CLI command, the `ToolCallCard`
-component (`frontend/src/components/chat/ToolCallCard.tsx`) checks
-`getGoldilocksCommand(tool.args)` and renders specialized cards.
-
-1. Create `frontend/src/components/science/YourCard.tsx`
-
-2. In `ToolCallCard.tsx`, add a case in the existing `if (tool.toolName === 'bash' && ...)` block:
-   ```tsx
-   if (cmd === 'yourcommand') {
-     const parsed = parseYourResult(tool.result);
-     if (parsed) return <YourCard data={parsed} />;
-   }
-   ```
-
-3. Write a `parseYourResult()` function that extracts structured data from CLI JSON output.
-
-Currently recognized commands: `predict` → KPointsResultCard, `generate` → InputFileCard, `search` → inline table.
-
-## How To: Add a New Zustand Store
-
-1. Create `frontend/src/store/mystore.ts`:
-   ```ts
-   import { create } from 'zustand';
-
-   interface MyState {
-     items: Item[];
-     fetch: () => Promise<void>;
-   }
-
-   export const useMyStore = create<MyState>((set) => ({
-     items: [],
-     fetch: async () => {
-       const { items } = await api.get<{ items: Item[] }>('/my-items');
-       set({ items });
-     },
-   }));
-   ```
-
-2. Use in components: `const items = useMyStore((s) => s.items);`
-
-3. For persistence, wrap with `persist()`:
-   ```ts
-   export const useMyStore = create<MyState>()(
-     persist((set) => ({ ... }), { name: 'goldilocks-my-store' })
-   );
-   ```
-
-## Testing
-
-**Smoke test** (`test/smoke-test.sh`): Starts the server on a temp port with a
-temp data directory, registers a user, creates a conversation, uploads a file,
-hits all REST endpoints, and verifies responses. Requires a built server
-(`npm run build` first). Does NOT test WebSocket/agent — only HTTP API surface.
-
-**Type checking**: `npm run typecheck` runs `tsc --noEmit` on both workspaces.
-Both have `strict: true`, `noUnusedLocals: true`, `noUnusedParameters: true`.
-
-**No unit test framework** is set up. The smoke test + TypeScript strict mode
-are the current safety nets.
-
-## Known Quirks and Gotchas
-
-### 3Dmol.js Import
-
-`frontend/src/components/science/StructureViewer.tsx` imports 3Dmol.js with
-`import * as $3Dmol from '3dmol'`. The `$` prefix is required because 3Dmol
-attaches to the global `$3Dmol` variable. The Vite config may need special
-handling for this module's side effects.
-
-### Express 5 Catch-All Syntax
-
-Express 5 requires named parameters for catch-all routes. In `server/src/index.ts`:
-```ts
-// Express 4: app.get('*', handler)
-// Express 5: app.get('/{*splat}', handler)
-app.get('/{*splat}', (req, res, next) => { ... });
-```
-
-### localStorage Chat Persistence
-
-Chat messages are stored in `localStorage` keyed by conversation ID, NOT in the
-server database. The `conversations` table only stores metadata (title, model,
-timestamps). Clearing browser data loses all message history. Large tool results
-are truncated to 2KB before storage to avoid quota issues. Max 50 conversations
-stored; oldest are pruned on save.
-
-### File Upload Format
-
-Files are uploaded as JSON with base64-encoded content (`{ filename, content }`),
-NOT as multipart/form-data. This is handled in `server/src/files/routes.ts`.
-Max 10MB per file. Allowed extensions are restricted.
-
-### WebSocket Generation Counter
-
-In `useAgent.ts`, a `generationRef` counter prevents stale WebSocket messages
-from being dispatched to the store when the user rapidly switches between
-conversations. Each `useEffect` run increments the counter; incoming messages
-check their generation matches the current one.
-
-### Rate Limiting
-
-`server/src/index.ts` applies `express-rate-limit`: 60 req/min in production
-(300 in dev) globally, and 20 req/15min on auth endpoints.
-
-### CORS
-
-Permissive in development (`cors()` with no options). In production, restricted
-to `CORS_ORIGIN` env var.
+- **3Dmol.js**: Import as `import * as $3Dmol from '3dmol'` — the `$` prefix is required.
+- **Express 5**: Catch-all routes use `/{*splat}` syntax, not `*`.
+- **Chat persistence**: Messages stored in localStorage, not server DB. Clearing browser data loses history.
+- **File uploads**: JSON with base64 content, not multipart/form-data. Max 10MB.
+- **WebSocket generation counter**: `useAgent.ts` uses a generation counter to discard stale events on rapid conversation switches.

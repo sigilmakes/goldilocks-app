@@ -2,8 +2,6 @@
 
 AI-powered web application for generating Quantum ESPRESSO input files with ML-predicted k-point grids. Getting your DFT parameters *just right*.
 
-<!-- TODO: Add screenshot of the workspace view here -->
-
 Goldilocks pairs an AI chat assistant with domain-specific ML models to help computational materials scientists set up DFT calculations. Upload a crystal structure, get an optimal k-point grid predicted by ALIGNN or Random Forest models, and generate a ready-to-run Quantum ESPRESSO input file — all through a conversational interface or deterministic quick-generate mode.
 
 ## Features
@@ -27,7 +25,7 @@ Goldilocks pairs an AI chat assistant with domain-specific ML models to help com
 | Backend | Express 5, TypeScript, better-sqlite3, WebSocket (ws) |
 | Agent | [Pi SDK](https://github.com/mariozechner/pi-coding-agent) (`@mariozechner/pi-coding-agent`) |
 | Auth | JWT (jsonwebtoken), bcrypt, AES-256-GCM encrypted API key storage |
-| Orchestration | Kubernetes (`@kubernetes/client-node`), kind for local dev |
+| Orchestration | Kubernetes (`@kubernetes/client-node`), kind + Tilt for local dev |
 | Visualization | 3Dmol.js, Mermaid |
 | Build | npm workspaces, multi-stage Docker |
 
@@ -37,7 +35,7 @@ Goldilocks pairs an AI chat assistant with domain-specific ML models to help com
 
 - Node.js ≥ 20
 - npm ≥ 10
-- Docker, [kind](https://kind.sigs.k8s.io/), kubectl
+- Docker, [kind](https://kind.sigs.k8s.io/), kubectl, [Tilt](https://docs.tilt.dev/install.html)
 - At least one LLM API key (Anthropic, OpenAI, or Google) for chat features
 
 ### Development
@@ -48,30 +46,29 @@ git clone <repo-url> goldilocks-app
 cd goldilocks-app
 npm install
 
-# One-time: create kind cluster + apply k8s manifests
-npm run k8s:setup
+# One-time: create kind cluster
+bash deploy/setup-dev.sh
 
-# Start both frontend and backend in dev mode
-# (Express runs locally, agent pods run in kind)
-npm run dev
+# Start everything — web app, agents, infrastructure, all in k8s
+tilt up
 ```
+
+That's it. Tilt builds images, applies manifests, syncs file changes, and
+port-forwards automatically.
 
 - Frontend: http://localhost:5173 (Vite dev server with HMR)
 - Backend: http://localhost:3000 (Express with tsx watch)
+- Tilt dashboard: http://localhost:10350
 
-The Vite dev server proxies `/api` and `/ws` requests to the backend automatically.
-Agent sessions always run in k8s pods — even in development.
-
-### Rebuild agent image
-
-```bash
-npm run k8s:build-agent
-```
+Edit a React component → Tilt syncs the file → Vite HMR in the browser.
+Edit an Express route → Tilt syncs → tsx restarts the server.
+No image rebuilds for source changes. Sub-second for frontend, ~2s for backend.
 
 ### Teardown
 
 ```bash
-npm run k8s:teardown
+tilt down          # Stop services, remove k8s resources
+kind delete cluster --name goldilocks   # Delete the cluster entirely
 ```
 
 ## Environment Variables
@@ -125,47 +122,41 @@ goldilocks-app/
 │   │   │   ├── sessions.ts          # Session cache (wraps k8s backend)
 │   │   │   ├── websocket.ts         # WebSocket server + event mapping
 │   │   │   └── workspace-guard.ts   # Path traversal prevention
-│   │   ├── auth/
-│   │   │   ├── routes.ts        # Register, login, refresh, me
-│   │   │   ├── middleware.ts    # JWT verification middleware
-│   │   │   └── hash.ts          # bcrypt password hashing
-│   │   ├── conversations/routes.ts   # CRUD for conversations
-│   │   ├── files/routes.ts           # File upload, download, list, delete
-│   │   ├── models/routes.ts          # Available LLM models (via Pi SDK)
-│   │   ├── settings/routes.ts        # User settings + encrypted API keys
-│   │   ├── structures/routes.ts      # Structure search/fetch + library
-│   │   ├── quickgen/routes.ts        # Deterministic predict + generate
-│   │   ├── migrations/001_init.sql   # SQLite schema
-│   │   ├── config.ts                 # Environment config
-│   │   ├── crypto.ts                 # AES-256-GCM encrypt/decrypt
-│   │   ├── db.ts                     # SQLite connection + migration runner
-│   │   └── index.ts                  # Express app setup + server start
+│   │   ├── auth/routes.ts           # Register, login, refresh, me
+│   │   ├── conversations/routes.ts  # CRUD for conversations
+│   │   ├── files/routes.ts          # File upload, download, list, delete
+│   │   ├── models/routes.ts         # Available LLM models
+│   │   ├── settings/routes.ts       # User settings + encrypted API keys
+│   │   ├── structures/routes.ts     # Structure search/fetch + library
+│   │   ├── quickgen/routes.ts       # Deterministic predict + generate
+│   │   ├── config.ts               # Environment config
+│   │   ├── db.ts                    # SQLite connection + migration runner
+│   │   └── index.ts                 # Express app setup + server start
 │   └── package.json
 │
-├── k8s/                         # Kubernetes manifests (primary deployment method)
+├── k8s/                         # Kubernetes manifests
 │   ├── namespace.yaml
 │   ├── rbac.yaml
 │   ├── network-policies.yaml
 │   ├── resource-quota.yaml
-│   ├── agent-pod-template.yaml  # Reference spec for agent pods
-│   ├── workspace-pvc-template.yaml  # Per-user workspace PVC
-│   ├── web-app.yaml
+│   ├── web-app.yaml             # Web app deployment + service
 │   ├── mcp-server.yaml
-│   ├── ingress.yaml
-│   └── secrets.yaml
+│   └── ingress.yaml
 │
 ├── deploy/                      # Deployment tooling
-│   ├── docker/                  # Dockerfiles for web, agent, MCP server
-│   ├── kind-config.yaml         # kind cluster config for local dev
-│   ├── setup-dev.sh             # One-command dev environment setup
-│   ├── teardown-dev.sh          # Tear down kind cluster
+│   ├── docker/
+│   │   ├── Dockerfile.web       # Production multi-stage build
+│   │   ├── Dockerfile.web.dev   # Dev mode: tsx watch + vite dev
+│   │   ├── Dockerfile.agent     # Agent container (Pi SDK)
+│   │   └── Dockerfile.mcp      # MCP server (ML inference)
+│   ├── kind-config.yaml         # kind cluster config (no port mappings)
+│   ├── setup-dev.sh             # One-time cluster setup
 │   └── README.md                # Deployment guide
 │
-├── shared/types.ts              # WebSocket message types (client + server)
+├── Tiltfile                     # Dev orchestration — builds, syncs, port-forwards
 ├── skills/goldilocks/SKILL.md   # Pi agent skill (DFT domain knowledge)
 ├── test/smoke-test.sh           # End-to-end smoke test
 ├── Dockerfile                   # Multi-stage production Docker build
-├── .env.example                 # Environment variable template
 ├── AGENTS.md                    # Agent context for Pi SDK sessions
 └── package.json                 # npm workspace root
 ```
@@ -174,41 +165,19 @@ goldilocks-app/
 
 Goldilocks follows a three-panel workspace layout: **Sidebar** (conversations + structure library), **Chat** (agent interaction), and **Context** (structure viewer, parameters, files).
 
-The backend serves both the API and the built frontend. Agent sessions are managed via WebSocket — the client authenticates, opens a conversation, and sends prompts. The server creates agent pods in Kubernetes, each running a Pi SDK session scoped to the conversation's workspace. Events stream back over the WebSocket as they happen.
+The backend serves both the API and the built frontend. Agent sessions are managed via WebSocket — the client authenticates, opens a conversation, and sends prompts. The server creates agent pods in Kubernetes, each running a Pi SDK session scoped to the conversation's workspace.
 
-**Kubernetes is the only way to run agent sessions.** Local dev uses `kind` (Kubernetes IN Docker), production uses a real cluster. The `ContainerSessionBackend` uses `@kubernetes/client-node` to create/delete/watch pods, with automatic kubeconfig detection (in-cluster service account or local `~/.kube/config`).
-
-For the full architecture diagram and detailed component documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Kubernetes is the only way to run agent sessions.** Local dev uses `kind` (Kubernetes IN Docker) with Tilt for live-reload. Production uses a real cluster. The `ContainerSessionBackend` uses `@kubernetes/client-node` to create/delete/watch pods.
 
 ## Deployment
 
 See [deploy/README.md](deploy/README.md) for:
-- Local development with kind
+- Local development with kind + Tilt
 - Production Kubernetes deployment
 - Container image builds
 - Secret management
 
 ## Contributing
-
-### Adding a New API Route
-
-1. Create a route file in `server/src/<domain>/routes.ts`
-2. Define a Router with `verifyToken` middleware
-3. Register it in `server/src/index.ts` with `app.use('/api/<path>', router)`
-
-### Adding a New Frontend Component
-
-1. Create the component in the appropriate `frontend/src/components/` subdirectory
-2. For state, add a Zustand store in `frontend/src/store/` if needed
-3. Use the `api` client from `frontend/src/api/client.ts` for HTTP requests
-
-### Adding a New Tool Result Card
-
-When the agent calls a bash command with the `goldilocks` CLI, the `ChatPanel` automatically renders specialized cards for recognized commands. To add a new card:
-
-1. Create a card component in `frontend/src/components/science/`
-2. In `ChatPanel.tsx`, add a case in the `ToolCallCard` component that checks `getGoldilocksCommand()` and parses the tool result
-3. Return your custom card component instead of the default expandable tool card
 
 ### Running Tests
 

@@ -3,8 +3,8 @@
 ## Architecture
 
 Kubernetes is the **only** way to run agent sessions. Local dev uses `kind`
-(Kubernetes IN Docker). Production uses a real k8s cluster. Same code, same
-manifests, same behaviour.
+(Kubernetes IN Docker) with Tilt for live-reload. Production uses a real k8s
+cluster. Same code, same manifests.
 
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
@@ -39,35 +39,46 @@ manifests, same behaviour.
 - Per-namespace resource quota limits total agent pods
 - Per-user workspace PVC for file persistence
 
-## Local Development (kind)
+## Local Development (kind + Tilt)
 
 ### Prerequisites
 
 - Docker
 - [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
 - kubectl
+- [Tilt](https://docs.tilt.dev/install.html) (`curl -fsSL https://raw.githubusercontent.com/tilt-dev/tilt/master/scripts/install.sh | bash`)
 
 ### Setup
 
 ```bash
-# One-time setup: creates kind cluster, builds agent image, applies manifests
-npm run k8s:setup
+# One-time: create kind cluster
+bash deploy/setup-dev.sh
 
-# Start the web app locally (agents run in kind)
-npm run dev
+# Start everything
+tilt up
 ```
 
-The web app (Express) runs on your host and creates agent pods in the kind
-cluster via the k8s API. Vite HMR works normally for frontend development.
+Tilt handles:
+- Building `goldilocks-web` (dev Dockerfile with tsx + vite)
+- Building `goldilocks-agent` image
+- Applying all k8s manifests
+- Live-syncing source files into the web app pod (no image rebuild)
+- Port-forwarding Express (3000) and Vite (5173)
 
 ### Daily workflow
 
 ```bash
-npm run dev                   # Start web app (agents in kind)
-npm run k8s:build-agent       # Rebuild + reload agent image after changes
-kubectl get pods -n goldilocks  # Check agent pods
-npm run k8s:teardown          # Delete kind cluster when done
+tilt up                         # Start dev environment
+# Edit code — Tilt syncs changes automatically
+# Frontend: Vite HMR (sub-second)
+# Backend: tsx watch restarts (1-2s)
+tilt down                       # Stop everything
+kind delete cluster --name goldilocks   # Nuclear option
 ```
+
+### Tilt Dashboard
+
+Open http://localhost:10350 to see build status, logs, and resource health.
 
 ## Production (Kubernetes Cluster)
 
@@ -79,7 +90,6 @@ npm run k8s:teardown          # Delete kind cluster when done
 ### Deploy
 
 ```bash
-# Apply manifests from the k8s/ directory
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/network-policies.yaml
@@ -89,34 +99,23 @@ kubectl apply -f k8s/web-app.yaml
 kubectl apply -f k8s/ingress.yaml
 ```
 
+Note: For production, update `k8s/web-app.yaml` to use the production image
+(`ghcr.io/sigilmakes/goldilocks-web:latest`) and set `NODE_ENV=production`.
+
 ## Building Container Images
 
 ```bash
-# Web app
+# Web app (production)
 docker build -t goldilocks-web -f deploy/docker/Dockerfile.web .
 
 # Agent
 docker build -t goldilocks-agent -f deploy/docker/Dockerfile.agent .
 
-# MCP server (needs goldilocks-mcp repo)
+# MCP server
 docker build -t goldilocks-mcp -f deploy/docker/Dockerfile.mcp .
 ```
 
 ## Configuration
-
-### Environment Variables (Web App)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `JWT_SECRET` | Yes | `dev-secret...` | JWT signing secret |
-| `ENCRYPTION_KEY` | Yes | `dev-encryption...` | AES key for API key encryption |
-| `ANTHROPIC_API_KEY` | No | — | Server-wide Anthropic API key |
-| `OPENAI_API_KEY` | No | — | Server-wide OpenAI API key |
-| `GOOGLE_API_KEY` | No | — | Server-wide Google API key |
-| `K8S_NAMESPACE` | No | `goldilocks` | k8s namespace for agent pods |
-| `AGENT_IMAGE` | No | `goldilocks-agent:latest` | Agent container image |
-| `AGENT_IDLE_TIMEOUT_MS` | No | `1800000` | Agent pod idle timeout (30min) |
-| `WORKSPACE_QUOTA_BYTES` | No | `1073741824` | Per-user workspace size (1GB) |
 
 ### Secrets
 
@@ -140,6 +139,17 @@ kubectl create secret generic hpc-ssh-key \
   --from-file=known_hosts=/path/to/known_hosts \
   -n goldilocks
 ```
+
+### Environment Variables (Web App)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JWT_SECRET` | Yes | `dev-secret...` | JWT signing secret |
+| `ENCRYPTION_KEY` | Yes | `dev-encryption...` | AES key for API key encryption |
+| `ANTHROPIC_API_KEY` | No | — | Server-wide Anthropic API key |
+| `K8S_NAMESPACE` | No | `goldilocks` | k8s namespace for agent pods |
+| `AGENT_IMAGE` | No | `goldilocks-agent:latest` | Agent container image |
+| `AGENT_IDLE_TIMEOUT_MS` | No | `1800000` | Agent pod idle timeout (30min) |
 
 ## The Escape Hatch
 
