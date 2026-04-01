@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-:root {
+/* ─── Dark mode (default) ─── */
+:root,
+.dark {
   --color-primary: #f59e0b;
   --color-primary-dark: #d97706;
   --color-bg: #0f172a;
@@ -10,6 +12,49 @@
   --color-text-secondary: #94a3b8;
   --color-border: #334155;
 }
+
+/* ─── Light mode ─── */
+.light {
+  --color-primary: #d97706;
+  --color-primary-dark: #b45309;
+  --color-bg: #ffffff;
+  --color-bg-secondary: #f1f5f9;
+  --color-bg-tertiary: #e2e8f0;
+  --color-text: #1e293b;
+  --color-text-secondary: #475569;
+  --color-border: #cbd5e1;
+}
+
+/* Remap Tailwind slate palette in light mode */
+.light .bg-slate-900 { background-color: #ffffff; }
+.light .bg-slate-800 { background-color: #f1f5f9; }
+.light .bg-slate-700 { background-color: #e2e8f0; }
+.light .bg-slate-700\/50 { background-color: rgba(226, 232, 240, 0.5); }
+.light .bg-slate-600 { background-color: #cbd5e1; }
+
+.light .text-white { color: #1e293b; }
+.light .text-slate-200 { color: #334155; }
+.light .text-slate-300 { color: #475569; }
+.light .text-slate-400 { color: #64748b; }
+.light .text-slate-500 { color: #94a3b8; }
+
+.light .border-slate-700 { border-color: #e2e8f0; }
+.light .border-slate-600 { border-color: #cbd5e1; }
+
+.light .hover\:bg-slate-700:hover { background-color: #e2e8f0; }
+.light .hover\:bg-slate-600:hover { background-color: #cbd5e1; }
+.light .hover\:bg-slate-700\/50:hover { background-color: rgba(226, 232, 240, 0.5); }
+
+.light .placeholder-slate-400::placeholder { color: #94a3b8; }
+
+/* Amber accent adjustment for light mode */
+.light .text-amber-500 { color: #d97706; }
+.light .bg-amber-500 { background-color: #d97706; }
+.light .bg-amber-500\/20 { background-color: rgba(217, 119, 6, 0.2); }
+.light .bg-amber-500\/10 { background-color: rgba(217, 119, 6, 0.1); }
+.light .hover\:bg-amber-600:hover { background-color: #b45309; }
+.light .border-amber-500 { border-color: #d97706; }
+.light .focus\:ring-amber-500:focus { --tw-ring-color: #d97706; }
 
 body {
   margin: 0;
@@ -39,4 +84,8 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

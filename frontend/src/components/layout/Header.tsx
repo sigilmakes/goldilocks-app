@@ -1,7 +1,9 @@
-import { PanelLeft, PanelRight, User, LogOut, Settings } from 'lucide-react';
+import { PanelLeft, PanelRight, User, LogOut, Settings, Sun, Moon } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useModelsStore } from '../../store/models';
+import { useSettingsStore } from '../../store/settings';
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ModelSelectorSkeleton } from '../ui/Skeleton';
 
 interface HeaderProps {
@@ -20,6 +22,8 @@ export default function Header({
   isMobile = false,
 }: HeaderProps) {
   const { user, logout } = useAuthStore();
+  const { theme, setTheme } = useSettingsStore();
+  const navigate = useNavigate();
   const { models, selectedModel, isLoading, fetch, setSelected } = useModelsStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -87,10 +91,19 @@ export default function Header({
         )}
 
         {selectedModelData?.supportsThinking && (
-          <span className="text-xs text-amber-500 bg-amber-500/10 px-2 py-1 rounded">
+          <span className="text-xs text-amber-500 bg-amber-500/10 px-2 py-1 rounded hidden sm:inline">
             Thinking
           </span>
         )}
+
+        {/* Theme toggle */}
+        <button
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          className="p-2 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-amber-500"
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        >
+          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+        </button>
 
         <button
           onClick={onToggleContext}
@@ -121,7 +134,10 @@ export default function Header({
                 </div>
                 <div className="text-xs text-slate-400">{user?.email}</div>
               </div>
-              <button className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-300 hover:bg-slate-600">
+              <button
+                onClick={() => { navigate('/settings'); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-300 hover:bg-slate-600"
+              >
                 <Settings className="w-4 h-4" />
                 Settings
               </button>
