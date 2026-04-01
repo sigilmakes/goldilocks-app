@@ -1,0 +1,26 @@
+# Workspace PVC template — per-user persistent storage for agent workspaces
+#
+# Each user gets one PVC shared across all their conversations.
+# The web app creates PVCs dynamically named: workspace-{userId first 40}
+#
+# This manifest is a reference template. The actual PVCs are created
+# by the ContainerSessionBackend before creating agent pods, or
+# you can pre-create them for known users.
+#
+# For development (kind), the default StorageClass will be used.
+# For production, set the storageClassName to your cluster's storage class.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-USERID  # dynamically set
+  namespace: goldilocks
+  labels:
+    app: goldilocks-agent
+    goldilocks/type: workspace
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi  # WORKSPACE_QUOTA_BYTES default = 1GB
+  # storageClassName: standard  # uncomment and set for production
