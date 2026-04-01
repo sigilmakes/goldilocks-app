@@ -85,8 +85,8 @@ export default function ChatPanel() {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-slate-700 p-4">
-        <div className="max-w-3xl mx-auto flex items-end gap-2">
+      <div className="border-t border-slate-700 p-2 sm:p-4">
+        <div className="max-w-3xl mx-auto flex items-end gap-1 sm:gap-2">
           <button
             className="p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors"
             title="Attach file"
@@ -135,7 +135,7 @@ export default function ChatPanel() {
             </button>
           )}
         </div>
-        <div className="mt-2 text-xs text-slate-500 text-center">
+        <div className="mt-2 text-xs text-slate-500 text-center hidden sm:block">
           Press Enter to send, Shift+Enter for new line
         </div>
       </div>

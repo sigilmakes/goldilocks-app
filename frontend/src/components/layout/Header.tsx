@@ -9,6 +9,7 @@ interface HeaderProps {
   onToggleContext: () => void;
   sidebarOpen: boolean;
   contextOpen: boolean;
+  isMobile?: boolean;
 }
 
 export default function Header({
@@ -16,6 +17,7 @@ export default function Header({
   onToggleContext,
   sidebarOpen,
   contextOpen,
+  isMobile = false,
 }: HeaderProps) {
   const { user, logout } = useAuthStore();
   const { models, selectedModel, isLoading, fetch, setSelected } = useModelsStore();
@@ -40,8 +42,8 @@ export default function Header({
   const selectedModelData = models.find(m => m.id === selectedModel);
 
   return (
-    <header className="h-14 border-b border-slate-700 bg-slate-800 flex items-center justify-between px-4">
-      <div className="flex items-center gap-4">
+    <header className="h-14 border-b border-slate-700 bg-slate-800 flex items-center justify-between px-2 sm:px-4">
+      <div className="flex items-center gap-2 sm:gap-4">
         <button
           onClick={onToggleSidebar}
           className={`p-2 rounded-lg hover:bg-slate-700 transition-colors ${
@@ -58,11 +60,11 @@ export default function Header({
               <div className="w-2.5 h-2.5 bg-amber-300 rounded-full" />
             </div>
           </div>
-          <span className="font-semibold text-white">Goldilocks</span>
+          <span className="font-semibold text-white hidden sm:inline">Goldilocks</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1 sm:gap-2">
         {/* Model selector */}
         {isLoading ? (
           <ModelSelectorSkeleton />
@@ -74,7 +76,7 @@ export default function Header({
           <select 
             value={selectedModel ?? ''} 
             onChange={(e) => setSelected(e.target.value)}
-            className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500 max-w-[200px]"
+            className="px-2 sm:px-3 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500 max-w-[120px] sm:max-w-[200px]"
           >
             {models.map((model) => (
               <option key={`${model.provider}-${model.id}`} value={model.id}>
