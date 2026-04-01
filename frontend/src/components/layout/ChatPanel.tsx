@@ -97,7 +97,7 @@ export default function ChatPanel() {
                     <ThinkingBlock content={currentThinking} />
                   )}
                   {currentText && (
-                    <MarkdownContent content={currentText} />
+                    <MarkdownContent content={currentText} streaming />
                   )}
                   {Array.from(activeTools.values()).map((tool) => (
                     <ToolCallCard key={tool.toolCallId} tool={tool} />
@@ -508,14 +508,22 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
   );
 }
 
-function MarkdownContent({ content }: { content: string }) {
+function MarkdownContent({ content, streaming = false }: { content: string; streaming?: boolean }) {
   const html = useMemo(() => {
     try {
-      return marked.parse(content) as string;
+      let text = content;
+      if (streaming) {
+        // Close any unclosed code fences so marked doesn't swallow trailing text
+        const fenceCount = (text.match(/^```/gm) || []).length;
+        if (fenceCount % 2 !== 0) {
+          text += '\n```';
+        }
+      }
+      return marked.parse(text) as string;
     } catch {
       return content;
     }
-  }, [content]);
+  }, [content, streaming]);
 
   return (
     <div
