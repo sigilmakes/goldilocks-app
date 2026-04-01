@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { mkdirSync, existsSync, readdirSync, statSync, createReadStream, unlinkSync } from 'fs';
-import { writeFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { resolve, join, basename, extname } from 'path';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
 import { CONFIG } from '../config.js';
@@ -25,6 +25,24 @@ function ensureWorkspace(userId: string, conversationId: string): string {
 // Allowed file extensions for upload
 const ALLOWED_EXTENSIONS = new Set(['.cif', '.poscar', '.vasp', '.xyz', '.pdb', '.json', '.txt', '.in', '.out']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+/** Map file extension to Content-Type for serving files with proper headers. */
+const CONTENT_TYPE_MAP: Record<string, string> = {
+  '.cif': 'chemical/x-cif',
+  '.poscar': 'chemical/x-vasp',
+  '.vasp': 'chemical/x-vasp',
+  '.xyz': 'chemical/x-xyz',
+  '.pdb': 'chemical/x-pdb',
+  '.json': 'application/json',
+  '.txt': 'text/plain',
+  '.in': 'text/plain',
+  '.out': 'text/plain',
+};
+
+function getContentType(filename: string): string {
+  const ext = extname(filename).toLowerCase();
+  return CONTENT_TYPE_MAP[ext] ?? 'application/octet-stream';
+}
 
 // GET /api/conversations/:id/files - List workspace files
 router.get('/:conversationId/files', (req: AuthRequest, res: Response) => {
@@ -127,7 +145,7 @@ router.post('/:conversationId/upload', async (req: AuthRequest, res: Response) =
   }
 });
 
-// GET /api/conversations/:id/files/:filename - Download file
+// GET /api/conversations/:id/files/:filename - Download file with proper Content-Type
 router.get('/:conversationId/files/:filename', (req: AuthRequest, res: Response) => {
   if (!req.user) {
     res.status(401).json({ error: 'Unauthorized' });
@@ -151,8 +169,49 @@ router.get('/:conversationId/files/:filename', (req: AuthRequest, res: Response)
     return;
   }
 
-  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+  const contentType = getContentType(safeName);
+  const stats = statSync(filePath);
+
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Length', stats.size);
+
+  // Use inline for text types so browser can display, attachment for binary
+  const disposition = contentType.startsWith('text/') || contentType === 'application/json'
+    ? 'inline' : 'attachment';
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
+
   createReadStream(filePath).pipe(res);
+});
+
+// GET /api/conversations/:id/files/:filename/content - Read file content as text
+router.get('/:conversationId/files/:filename/content', async (req: AuthRequest, res: Response) => {
+  if (!req.user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const conversationId = req.params.conversationId as string;
+  const filename = req.params.filename as string;
+  const workspacePath = getWorkspacePath(req.user.id, conversationId);
+  const safeName = basename(filename);
+  const filePath = join(workspacePath, safeName);
+
+  if (!existsSync(filePath)) {
+    res.status(404).json({ error: 'File not found' });
+    return;
+  }
+
+  if (!filePath.startsWith(workspacePath)) {
+    res.status(403).json({ error: 'Access denied' });
+    return;
+  }
+
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    res.json({ filename: safeName, content });
+  } catch {
+    res.status(500).json({ error: 'Failed to read file' });
+  }
 });
 
 // DELETE /api/conversations/:id/files/:filename - Delete file
