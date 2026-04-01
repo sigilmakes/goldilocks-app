@@ -165,6 +165,7 @@ export default function Header({
 }
 
 function KeySourceBadge({ provider, apiKeys }: { provider: string; apiKeys: ApiKeyInfo[] }) {
+  if (!apiKeys || !Array.isArray(apiKeys)) return null;
   const keyInfo = apiKeys.find((k) => k.provider === provider);
 
   if (!keyInfo || !keyInfo.hasKey) return null;
