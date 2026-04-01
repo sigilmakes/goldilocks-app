@@ -1,15 +1,32 @@
 /**
  * Session management module.
  *
- * WARNING: LocalSessionBackend runs all sessions in the Express server process.
- * No sandboxing. See architecture-decisions.md §5.
+ * Selects the appropriate SessionBackend based on the SESSION_BACKEND env var:
+ * - "local" (default): runs Pi SDK sessions in-process. No sandboxing.
+ *   WARNING: All users share the same OS process. See architecture-decisions.md §5.
+ * - "container": spawns per-user Docker containers for isolated sessions.
+ *   Requires Docker socket access or k8s service account.
  */
 
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import { LocalSessionBackend } from './local-backend.js';
+import { ContainerSessionBackend } from './container-backend.js';
 import type { SessionBackend, SessionHandle } from './session-backend.js';
 
-const backend: SessionBackend = new LocalSessionBackend();
+function createBackend(): SessionBackend {
+  const mode = process.env.SESSION_BACKEND ?? 'local';
+  switch (mode) {
+    case 'container':
+      console.log('Using ContainerSessionBackend (per-user Docker containers)');
+      return new ContainerSessionBackend();
+    case 'local':
+    default:
+      console.log('Using LocalSessionBackend (in-process, no sandboxing)');
+      return new LocalSessionBackend();
+  }
+}
+
+const backend: SessionBackend = createBackend();
 
 /**
  * Thin compatibility wrapper around SessionBackend.
