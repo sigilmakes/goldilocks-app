@@ -28,13 +28,12 @@ function ensureInit() {
   });
 }
 
-let idCounter = 0;
-
 export default function MermaidDiagram({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const idRef = useRef(`mermaid-${++idCounter}`);
+  // Use crypto.randomUUID for stable, collision-free IDs (§4.10)
+  const idRef = useRef(`mermaid-${crypto.randomUUID()}`);
 
   useEffect(() => {
     if (!code.trim()) return;

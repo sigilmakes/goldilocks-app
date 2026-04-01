@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Paperclip, Sparkles, Square, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useChatStore, type ChatMessage, type AssistantBlock, type ToolCall } from '../../store/chat';
 import { useConversationsStore } from '../../store/conversations';
+import { useAuthStore } from '../../store/auth';
+import { useFilesStore } from '../../store/files';
 import { useAgent } from '../../hooks/useAgent';
 import { useContextStore, type PredictionResult } from '../../store/context';
 import KPointsResultCard from '../science/KPointsResultCard';
@@ -24,7 +26,7 @@ export default function ChatPanel() {
 
   const handleFileAttach = useCallback(async (files: FileList | null) => {
     if (!files || !activeConversationId) return;
-    const token = (await import('../../store/auth')).useAuthStore.getState().token;
+    const token = useAuthStore.getState().token;
     for (const file of Array.from(files)) {
       try {
         // Read as base64 and upload
@@ -49,7 +51,7 @@ export default function ChatPanel() {
       }
     }
     // Refresh files list
-    const filesStore = (await import('../../store/files')).useFilesStore.getState();
+    const filesStore = useFilesStore.getState();
     filesStore.fetch(activeConversationId);
   }, [activeConversationId, send]);
 
@@ -84,7 +86,7 @@ export default function ChatPanel() {
         ) : (
           <div className="space-y-4 max-w-3xl mx-auto">
             {messages.map((msg, i) => (
-              <MessageBubble key={i} message={msg} />
+              <MessageBubble key={`${msg.timestamp}-${i}`} message={msg} />
             ))}
             
             {/* Streaming content */}
