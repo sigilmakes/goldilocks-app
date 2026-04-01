@@ -65,7 +65,7 @@ export default function ChatPanel() {
                   )}
                   {Array.from(activeTools.values()).map((tool) => (
                     <ToolCallCard key={tool.toolCallId} tool={tool} />
-                  ))
+                  ))}
                   {!currentText && !currentThinking && activeTools.size === 0 && (
                     <div className="flex items-center gap-2 text-slate-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
