@@ -229,7 +229,6 @@ export function setupWebSocket(wss: WebSocketServer): void {
               let messages: HistoryMessage[] = [];
               try {
                 const history = await sessionManager.getMessages(state.user.id);
-                console.log('get_messages raw:', JSON.stringify(history).slice(0, 500));
                 // Pi may return { messages: [...] } or bare array
                 const msgList = Array.isArray(history) ? history
                   : (history as Record<string, unknown>)?.messages;
