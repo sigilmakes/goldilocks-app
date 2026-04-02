@@ -35,8 +35,10 @@ interface ClientState {
   isProcessing: boolean;
   /** Track whether text deltas were received for the current message. */
   receivedTextDelta: boolean;
-  /** Track the current streaming tool call ID. */
+  /** Track the current streaming tool call ID (from toolcall_start). */
   currentToolCallId: string | null;
+  /** Map pi's execution toolCallId → our streaming toolCallId. */
+  toolCallIdMap: Map<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,9 +99,8 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
             content: delta.delta,
           });
         } else if (delta.type === 'toolcall_end') {
-          // Don't send another tool_start — the card already exists from toolcall_start.
-          // Just update the args via tool_end when execution completes.
-          state.currentToolCallId = null;
+          // Don't send another tool_start — the card already exists.
+          // Keep currentToolCallId alive for tool_execution_start to map it.
         }
         break;
       }
@@ -124,29 +125,43 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
         break;
       }
 
-      case 'tool_execution_start':
-        // Don't send tool_start again — we already sent it from toolcall_start.
-        // The card exists. tool_execution_start means the tool is now executing.
-        break;
-
-      case 'tool_execution_update':
-        if (event.partialResult) {
-          const content = typeof event.partialResult === 'string'
-            ? event.partialResult
-            : JSON.stringify(event.partialResult);
-          send(ws, { type: 'tool_update', toolCallId: event.toolCallId as string, content });
+      case 'tool_execution_start': {
+        const execId = event.toolCallId as string;
+        if (state.currentToolCallId && execId) {
+          state.toolCallIdMap.set(execId, state.currentToolCallId);
+          state.currentToolCallId = null;
         }
         break;
+      }
 
-      case 'tool_execution_end':
+      case 'tool_execution_update':
+        // Skip — we already stream content via toolcall_delta during arg generation.
+        // tool_execution_update is the execution output, not the streamed args.
+        break;
+
+      case 'tool_execution_end': {
+        const execTcId = event.toolCallId as string;
+        const mappedId = state.toolCallIdMap.get(execTcId) ?? execTcId;
+        state.toolCallIdMap.delete(execTcId);
+
+        // Extract text from result (pi wraps it in {content: [{type: "text", text: "..."}]})
+        let result = event.result;
+        if (result && typeof result === 'object' && Array.isArray((result as any).content)) {
+          const textParts = (result as any).content
+            .filter((b: any) => b.type === 'text')
+            .map((b: any) => b.text ?? '');
+          result = textParts.join('');
+        }
+
         send(ws, {
           type: 'tool_end',
           toolName: event.toolName as string,
-          toolCallId: event.toolCallId as string,
-          result: event.result,
+          toolCallId: mappedId,
+          result,
           isError: event.isError as boolean ?? false,
         });
         break;
+      }
 
       case 'agent_end':
         send(ws, { type: 'agent_end' });
@@ -174,6 +189,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
       isProcessing: false,
       receivedTextDelta: false,
       currentToolCallId: null,
+      toolCallIdMap: new Map(),
     };
 
     const cleanup = () => {
