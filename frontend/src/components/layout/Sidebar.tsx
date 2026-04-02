@@ -18,7 +18,6 @@ export default function Sidebar() {
   } = useConversationsStore();
   
   const loadConversation = useChatStore((s) => s.loadConversation);
-  const deleteConversationHistory = useChatStore((s) => s.deleteConversationHistory);
   const clearFiles = useFilesStore((s) => s.clear);
 
   // Fetch conversations on mount
@@ -53,7 +52,6 @@ export default function Sidebar() {
     if (confirm('Delete this conversation?')) {
       try {
         await remove(id);
-        deleteConversationHistory(id);
         addToast('Conversation deleted', 'success');
       } catch (err) {
         console.error('Failed to delete conversation:', err);

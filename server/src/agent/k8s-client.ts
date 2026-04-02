@@ -21,7 +21,8 @@ function loadKubeConfig(): k8s.KubeConfig {
   try {
     _kc.loadFromCluster();
     console.log('Loaded k8s config from in-cluster service account');
-  } catch {
+  } catch (err) {
+    console.log('Not in-cluster, loading from default kubeconfig:', (err as Error).message);
     _kc.loadFromDefault();
     console.log('Loaded k8s config from default kubeconfig');
   }

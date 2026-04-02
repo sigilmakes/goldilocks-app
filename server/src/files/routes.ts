@@ -4,7 +4,6 @@ import { readFile, writeFile } from 'fs/promises';
 import { resolve, join, basename, extname } from 'path';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
 import { CONFIG } from '../config.js';
-import { validateWorkspacePath } from '../agent/workspace-guard.js';
 
 const router = Router();
 
@@ -128,10 +127,9 @@ router.post('/:conversationId/upload', async (req: AuthRequest, res: Response) =
   const conversationId = req.params.conversationId as string;
   const workspacePath = ensureWorkspace(req.user.id, conversationId);
   const safeName = basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
-  let filePath: string;
-  try {
-    filePath = validateWorkspacePath(workspacePath, safeName);
-  } catch {
+  const filePath = join(workspacePath, safeName);
+  // Validate path stays within workspace
+  if (!filePath.startsWith(workspacePath)) {
     res.status(403).json({ error: 'Path traversal detected' });
     return;
   }

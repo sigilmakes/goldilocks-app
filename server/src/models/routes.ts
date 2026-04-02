@@ -30,9 +30,13 @@ router.get('/', verifyToken, async (req: AuthRequest, res: Response) => {
           try {
             const key = decrypt(row.encrypted_key);
             if (key) authStorage.setRuntimeApiKey(providerId, key);
-          } catch {}
+          } catch (err) {
+            console.error(`Failed to decrypt ${row.provider} key for user ${req.user!.id}:`, err);
+          }
         }
-      } catch {}
+      } catch (err) {
+        console.error('Failed to query user API keys:', err);
+      }
     }
 
     // 2. Server-level keys as fallback

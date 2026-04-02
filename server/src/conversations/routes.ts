@@ -1,11 +1,8 @@
 import { Router, Response } from 'express';
 import { v4 as uuid } from 'uuid';
-import { rmSync, existsSync } from 'fs';
-import { resolve } from 'path';
 import { getDb } from '../db.js';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
-import { CONFIG } from '../config.js';
-import { sessionCache } from '../agent/sessions.js';
+import { sessionManager } from '../agent/sessions.js';
 
 const router = Router();
 
@@ -145,7 +142,7 @@ router.patch('/:id', (req: AuthRequest, res: Response) => {
 });
 
 // DELETE /api/conversations/:id - Delete conversation
-router.delete('/:id', (req: AuthRequest, res: Response) => {
+router.delete('/:id', async (req: AuthRequest, res: Response) => {
   if (!req.user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -162,19 +159,11 @@ router.delete('/:id', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Clean up workspace files and dispose agent session (§5.14)
-  const convId = req.params.id as string;
+  // Clean up pi session files on the PVC via the session manager
   try {
-    sessionCache.dispose(req.user.id, convId);
-  } catch { /* session may not exist */ }
-
-  const workspaceDir = resolve(CONFIG.workspaceRoot, req.user.id, convId);
-  if (existsSync(workspaceDir)) {
-    try {
-      rmSync(workspaceDir, { recursive: true, force: true });
-    } catch (err) {
-      console.error('Failed to clean up workspace:', err);
-    }
+    await sessionManager.deleteConversation(req.user.id, req.params.id as string);
+  } catch (err) {
+    console.error('Failed to clean up pi session:', err);
   }
 
   res.json({ ok: true });
