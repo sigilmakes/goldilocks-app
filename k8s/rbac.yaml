@@ -24,10 +24,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods/portforward"]
     verbs: ["create"]
-  # Manage per-user workspace PVCs
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["create", "get", "list"]
+
   # Read the SSH key secret (for agent pods that need HPC access)
   - apiGroups: [""]
     resources: ["secrets"]

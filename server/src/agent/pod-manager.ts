@@ -49,7 +49,7 @@ interface PodRecord {
 
 const NAMESPACE = CONFIG.k8sNamespace;
 const AGENT_IMAGE = CONFIG.agentImage;
-const PVC_SIZE = '5Gi';
+const HOMES_HOST_PATH = '/data/goldilocks/homes';
 const POD_READY_TIMEOUT_MS = 120_000;
 const IDLE_TIMEOUT_MS = CONFIG.agentIdleTimeoutMs;
 
@@ -85,11 +85,6 @@ function log(level: string, msg: string, data?: unknown): void {
 function podName(userId: string): string {
   const sanitized = userId.replace(/[^a-z0-9]/gi, '').slice(0, 16).toLowerCase();
   return `agent-${sanitized}`;
-}
-
-function pvcName(userId: string): string {
-  const sanitized = userId.replace(/[^a-z0-9]/gi, '').slice(0, 16).toLowerCase();
-  return `home-${sanitized}`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -255,8 +250,7 @@ export class PodManager {
       if (!isK8sNotFound(err)) throw err;
     }
 
-    // Ensure PVC exists
-    await this.ensurePvc(userId);
+
 
     // Create pod
     log('INFO', `Creating pod: ${name}`);
@@ -294,43 +288,7 @@ export class PodManager {
     }
   }
 
-  /**
-   * Ensure a PVC exists for this user.
-   */
-  async ensurePvc(userId: string): Promise<void> {
-    const name = pvcName(userId);
-    const coreApi = getCoreApi();
 
-    try {
-      await coreApi.readNamespacedPersistentVolumeClaim({ name, namespace: NAMESPACE });
-      return; // Already exists
-    } catch (err) {
-      if (!isK8sNotFound(err)) throw err;
-    }
-
-    log('INFO', `Creating PVC: ${name} (${PVC_SIZE})`);
-    const pvc: k8s.V1PersistentVolumeClaim = {
-      apiVersion: 'v1',
-      kind: 'PersistentVolumeClaim',
-      metadata: { name, namespace: NAMESPACE, labels: { app: 'goldilocks-agent', 'goldilocks/user': userId.slice(0, 63) } },
-      spec: {
-        accessModes: ['ReadWriteOnce'],
-        resources: { requests: { storage: PVC_SIZE } },
-      },
-    };
-
-    try {
-      await coreApi.createNamespacedPersistentVolumeClaim({ namespace: NAMESPACE, body: pvc });
-      log('INFO', `PVC created: ${name}`);
-    } catch (err) {
-      // 409 = AlreadyExists — another concurrent call created it first, that's fine
-      if (err && typeof err === 'object' && (err as Record<string, unknown>).code === 409) {
-        log('INFO', `PVC already exists (concurrent create): ${name}`);
-      } else {
-        throw err;
-      }
-    }
-  }
 
   /**
    * Exec a command in a user's pod.
@@ -526,7 +484,10 @@ export class PodManager {
         volumes: [
           {
             name: 'home',
-            persistentVolumeClaim: { claimName: pvcName(userId) },
+            hostPath: {
+              path: `${HOMES_HOST_PATH}/${userId}`,
+              type: 'DirectoryOrCreate',
+            },
           },
           {
             name: 'tmp',
