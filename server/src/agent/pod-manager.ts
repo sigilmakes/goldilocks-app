@@ -164,6 +164,7 @@ function getUserApiKeyEnvVars(userId: string): Array<{ name: string; value: stri
 
 export class PodManager {
   private pods = new Map<string, PodRecord>();
+  private ensuring = new Map<string, Promise<string>>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -185,6 +186,23 @@ export class PodManager {
       record.lastActive = Date.now();
       return name;
     }
+
+    // Dedup concurrent calls for the same user
+    const inflight = this.ensuring.get(userId);
+    if (inflight) return inflight;
+
+    const promise = this._ensurePod(userId);
+    this.ensuring.set(userId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.ensuring.delete(userId);
+    }
+  }
+
+  private async _ensurePod(userId: string): Promise<string> {
+    const name = podName(userId);
+    const record = this.pods.get(userId);
 
     // Check backoff for repeated failures
     if (record?.consecutiveFailures && record.consecutiveFailures >= 3) {
@@ -296,8 +314,17 @@ export class PodManager {
       },
     };
 
-    await coreApi.createNamespacedPersistentVolumeClaim({ namespace: NAMESPACE, body: pvc });
-    log('INFO', `PVC created: ${name}`);
+    try {
+      await coreApi.createNamespacedPersistentVolumeClaim({ namespace: NAMESPACE, body: pvc });
+      log('INFO', `PVC created: ${name}`);
+    } catch (err) {
+      // 409 = AlreadyExists — another concurrent call created it first, that's fine
+      if (err && typeof err === 'object' && (err as Record<string, unknown>).code === 409) {
+        log('INFO', `PVC already exists (concurrent create): ${name}`);
+      } else {
+        throw err;
+      }
+    }
   }
 
   /**
