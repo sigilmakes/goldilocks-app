@@ -8,16 +8,29 @@
 - **Node.js 22+**
 - **kubectl** — for debugging
 
+### Using Nix
+
+If you have [Nix](https://nixos.org/) with flakes enabled, all dependencies are provided by the dev shell:
+
+```bash
+nix develop        # enter the shell (Node.js 22, kind, kubectl, tilt)
+```
+
+Or with [direnv](https://direnv.net/), add `use flake` to `.envrc` for automatic activation.
+
 ## Quick Start
 
 ```bash
-# 1. Create the kind cluster (idempotent)
+# 1. Install npm dependencies
+npm install
+
+# 2. Create the kind cluster (idempotent)
 npm run dev:setup
 
-# 2. Start Tilt (builds images, deploys, watches for changes)
+# 3. Start Tilt (builds images, deploys, watches for changes)
 tilt up
 
-# 3. Open browser
+# 4. Open browser
 #    Frontend: http://localhost:5173
 #    API:      http://localhost:3000
 #    Tilt UI:  http://localhost:10350

@@ -29,6 +29,8 @@ Goldilocks pairs an AI chat assistant with domain-specific tools to help computa
 
 Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), [Tilt](https://docs.tilt.dev/install.html), Node.js 22+, and at least one LLM API key.
 
+If you use [Nix](https://nixos.org/), `nix develop` provides all dependencies (Node.js 22, kind, kubectl, tilt).
+
 ```bash
 npm install
 npm run dev:setup    # create kind cluster
