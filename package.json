@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "tilt up",
     "dev:down": "tilt down",
-    "dev:setup": "kind get clusters | grep -q goldilocks || kind create cluster --name goldilocks",
+    "dev:setup": "kind get clusters | grep -q goldilocks || kind create cluster --name goldilocks --config deploy/kind-config.yaml",
     "dev:reset": "kind delete cluster --name goldilocks",
     "dev:server": "npm run dev -w server",
     "dev:frontend": "npm run dev -w frontend",

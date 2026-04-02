@@ -79,8 +79,9 @@ spec:
             periodSeconds: 30
       volumes:
         - name: data
-          persistentVolumeClaim:
-            claimName: web-app-data
+          hostPath:
+            path: /data/goldilocks
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
@@ -97,15 +98,4 @@ spec:
     - port: 5173
       targetPort: 5173
       name: vite
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: web-app-data
-  namespace: goldilocks
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
+

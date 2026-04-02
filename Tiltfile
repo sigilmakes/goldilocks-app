@@ -59,6 +59,12 @@ docker_build(
         # Server: sync source, tsx watch auto-restarts
         sync('./server/src', '/app/server/src'),
 
+        # Shared types (server imports via symlink, frontend via relative path)
+        sync('./shared', '/app/shared'),
+
+        # Goldilocks CLI stub
+        sync('./bin', '/app/bin'),
+
         # Skills and agent context
         sync('./skills', '/app/skills'),
         sync('./AGENTS.md', '/app/AGENTS.md'),

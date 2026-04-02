@@ -1,0 +1,12 @@
+# Kind cluster config for local development.
+# Bind-mounts ./data into the kind node so the SQLite DB
+# and user workspaces survive cluster restarts.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: ./data
+        containerPath: /data/goldilocks
+        readOnly: false
+        propagation: Bidirectional
