@@ -95,7 +95,7 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
       {expanded && (
         <div className="px-3 py-2 space-y-2 bg-slate-800/50 overflow-hidden">
           {/* Show streaming content while tool args are being generated */}
-          {parsed?.content ? (
+          {parsed && parsed.content ? (
             <div className="min-w-0">
               <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
                 {parsed.content}
@@ -109,14 +109,14 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
             </div>
           ) : null}
           {/* Show parsed args when available and no stream content */}
-          {!tool.streamContent && tool.args && typeof tool.args === 'object' && Object.keys(tool.args as Record<string, unknown>).length > 0 && (
+          {!tool.streamContent && tool.args != null && typeof tool.args === 'object' && Object.keys(tool.args as Record<string, unknown>).length > 0 ? (
             <div className="min-w-0">
               <div className="text-xs text-slate-500 mb-1">Arguments</div>
               <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap">
                 {JSON.stringify(tool.args, null, 2)}
               </pre>
             </div>
-          )}
+          ) : null}
           {tool.result !== undefined && (
             <div>
               <div className="text-xs text-slate-500 mb-1">
