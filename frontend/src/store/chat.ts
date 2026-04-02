@@ -110,8 +110,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall: (_toolCallId, _content) => {
-    // Could show streaming output from tools — no-op for now
+  updateToolCall: (toolCallId, content) => {
+    set((state) => {
+      const newTools = new Map(state.activeTools);
+      const tool = newTools.get(toolCallId);
+      if (tool) {
+        // Accumulate streaming content into a special field
+        const existing = (tool as any).streamContent ?? '';
+        newTools.set(toolCallId, {
+          ...tool,
+          streamContent: existing + content,
+        } as any);
+      }
+      return { activeTools: newTools };
+    });
   },
 
   endToolCall: (toolCallId, result, isError) => {

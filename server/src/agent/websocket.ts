@@ -89,12 +89,23 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
               args: {},
             });
           }
+        } else if (delta.type === 'toolcall_delta' && delta.delta) {
+          // Streaming tool call arguments (e.g. file content being written)
+          const tc = delta.partial;
+          if (tc?.id) {
+            send(ws, {
+              type: 'tool_update',
+              toolCallId: tc.id,
+              content: delta.delta,
+            });
+          }
         } else if (delta.type === 'toolcall_end') {
-          // Tool call arguments finished streaming — send the full args
+          // Tool call arguments finished — send final args
           const tc = delta.toolCall;
           if (tc) {
             try {
               const args = tc.arguments ? JSON.parse(tc.arguments) : {};
+              // Re-send tool_start with full args so the card updates
               send(ws, {
                 type: 'tool_start',
                 toolName: tc.name ?? 'unknown',
@@ -102,7 +113,6 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
                 args,
               });
             } catch {
-              // args not valid JSON, send raw
               send(ws, {
                 type: 'tool_start',
                 toolName: tc.name ?? 'unknown',
