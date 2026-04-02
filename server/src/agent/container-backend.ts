@@ -357,6 +357,7 @@ export class ContainerSessionBackend implements SessionBackend {
     rpc.stopReading = attachJsonlReader(stdout, (line: string) => {
       try {
         const data = JSON.parse(line);
+        agentLog(info.podName, 'INFO', `RPC recv: type=${data.type} ${data.command ? 'cmd=' + data.command : ''} ${data.id ? 'id=' + data.id : ''}`.trim());
 
         // Check if it's a response to a pending RPC request
         if (data.type === 'response' && data.id && rpc.pendingRequests.has(data.id)) {
@@ -487,7 +488,9 @@ export class ContainerSessionBackend implements SessionBackend {
         },
       });
 
-      rpc.stdin.write(serializeJsonLine(fullCommand));
+      const line = serializeJsonLine(fullCommand);
+      agentLog(this.namespace, 'INFO', `RPC send: ${JSON.stringify(fullCommand)}`);
+      rpc.stdin.write(line);
     });
   }
 

@@ -2,16 +2,40 @@ import { Router, Response } from 'express';
 import { AuthStorage, ModelRegistry } from '@mariozechner/pi-coding-agent';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
 import { CONFIG } from '../config.js';
+import { getDb } from '../db.js';
+import { decrypt } from '../crypto.js';
+
+const PROVIDER_MAP: Record<string, string> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  google: 'google',
+};
 
 const router = Router();
 
 // GET /api/models - List available models based on configured API keys
-router.get('/', verifyToken, async (_req: AuthRequest, res: Response) => {
+router.get('/', verifyToken, async (req: AuthRequest, res: Response) => {
   try {
-    // Set up auth storage - this reads from ~/.pi/agent/auth.json
     const authStorage = AuthStorage.create();
-    
-    // Add any server-configured keys as overrides
+
+    // 1. User API keys from DB (highest priority)
+    if (req.user?.id) {
+      try {
+        const db = getDb();
+        const rows = db.prepare(
+          'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?'
+        ).all(req.user.id) as Array<{ provider: string; encrypted_key: string }>;
+        for (const row of rows) {
+          const providerId = PROVIDER_MAP[row.provider] ?? row.provider;
+          try {
+            const key = decrypt(row.encrypted_key);
+            if (key) authStorage.setRuntimeApiKey(providerId, key);
+          } catch {}
+        }
+      } catch {}
+    }
+
+    // 2. Server-level keys as fallback
     if (CONFIG.anthropicApiKey) {
       authStorage.setRuntimeApiKey('anthropic', CONFIG.anthropicApiKey);
     }
