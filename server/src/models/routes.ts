@@ -20,10 +20,14 @@ router.get('/', verifyToken, async (req: AuthRequest, res: Response) => {
 
   try {
     const result = await sessionManager.getAvailableModels(req.user.id);
+    console.log('get_available_models result:', JSON.stringify(result).slice(0, 500));
     
-    // Pi returns models in its own format — normalize for frontend
-    const models = Array.isArray(result) ? result : [];
-    const providers = [...new Set(models.map((m: Record<string, unknown>) => m.provider as string))];
+    // Pi may return { models: [...] } or just [...]
+    const raw = result as Record<string, unknown>;
+    const models = Array.isArray(result) ? result
+      : Array.isArray(raw?.models) ? raw.models
+      : [];
+    const providers = [...new Set((models as Array<Record<string, unknown>>).map((m) => m.provider as string))];
 
     res.json({ models, providers });
   } catch (err) {
