@@ -78,6 +78,12 @@ shared/types.ts        # WebSocket protocol types
 - **API keys in DB**: Encrypted with AES-256-GCM, decrypted at pod creation and passed as env vars.
 - **Messages from pi**: Chat history lives in pi's session files, not in SQLite. DB stores conversation metadata only.
 
+## Documentation
+
+- **[Architecture](docs/ARCHITECTURE.md)** — Layer diagram, data ownership, event flows, security
+- **[Development Guide](docs/DEVELOPMENT.md)** — Setup, workflow, debugging, project structure
+- **[WebSocket Protocol](docs/WEBSOCKET-PROTOCOL.md)** — Client/server messages, state machine, multi-tab
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -88,5 +94,4 @@ shared/types.ts        # WebSocket protocol types
 | `AGENT_IMAGE` | `goldilocks-agent:latest` | Agent container image |
 | `JWT_SECRET` | dev default | JWT signing secret |
 | `ENCRYPTION_KEY` | dev default | API key encryption key |
-| `ANTHROPIC_API_KEY` | — | Server-level Anthropic key (fallback) |
 | `AGENT_IDLE_TIMEOUT_MS` | `1800000` (30min) | Pod idle timeout |
