@@ -451,11 +451,22 @@ export class PodManager {
         restartPolicy: 'Never',
         automountServiceAccountToken: false,
         securityContext: {
-          runAsNonRoot: true,
-          runAsUser: 1000,
-          runAsGroup: 1000,
           fsGroup: 1000,
         },
+        // Init container to fix ownership on hostPath volume
+        // (kind creates the directory as root, but pi runs as uid 1000)
+        initContainers: [
+          {
+            name: 'fix-perms',
+            image: AGENT_IMAGE,
+            imagePullPolicy: 'Never',
+            command: ['sh', '-c', 'chown -R 1000:1000 /home/node'],
+            securityContext: { runAsUser: 0 },
+            volumeMounts: [
+              { name: 'home', mountPath: '/home/node' },
+            ],
+          },
+        ],
         containers: [
           {
             name: 'agent',
@@ -463,6 +474,8 @@ export class PodManager {
             imagePullPolicy: 'Never',
             command: ['sleep', 'infinity'],
             securityContext: {
+              runAsUser: 1000,
+              runAsGroup: 1000,
               allowPrivilegeEscalation: false,
               capabilities: { drop: ['ALL'] },
             },
