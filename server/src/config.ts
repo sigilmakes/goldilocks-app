@@ -34,10 +34,7 @@ export const CONFIG = {
   agentIdleTimeoutMs: parseInt(process.env.AGENT_IDLE_TIMEOUT_MS ?? '1800000', 10), // 30min
 
   
-  // API Keys
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  openaiApiKey: process.env.OPENAI_API_KEY,
-  googleApiKey: process.env.GOOGLE_API_KEY,
+
   
   get isDev() {
     return this.nodeEnv === 'development';

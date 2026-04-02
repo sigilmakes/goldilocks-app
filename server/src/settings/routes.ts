@@ -1,7 +1,6 @@
 import { Router, Response } from 'express';
 import { getDb } from '../db.js';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
-import { CONFIG } from '../config.js';
 import { encrypt, decrypt } from '../crypto.js';
 
 const router = Router();
@@ -11,18 +10,6 @@ router.use(verifyToken);
 
 const SUPPORTED_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
 type Provider = (typeof SUPPORTED_PROVIDERS)[number];
-
-/** Map provider name to the server-configured API key (if any). */
-function getServerKey(provider: Provider): string | undefined {
-  switch (provider) {
-    case 'anthropic':
-      return CONFIG.anthropicApiKey;
-    case 'openai':
-      return CONFIG.openaiApiKey;
-    case 'google':
-      return CONFIG.googleApiKey;
-  }
-}
 
 // GET /api/settings - Returns user settings (from users.settings JSON column)
 router.get('/', (req: AuthRequest, res: Response) => {
@@ -95,7 +82,6 @@ router.get('/api-keys', (req: AuthRequest, res: Response) => {
   const apiKeys = SUPPORTED_PROVIDERS.map((provider) => ({
     provider,
     hasKey: userKeyMap.has(provider),
-    isServerKey: !!getServerKey(provider),
     createdAt: userKeyMap.get(provider) ?? null,
   }));
 

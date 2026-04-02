@@ -144,17 +144,6 @@ function getUserApiKeyEnvVars(userId: string): Array<{ name: string; value: stri
     log('ERROR', 'Failed to query user API keys', err);
   }
 
-  // Fall back to server-level keys
-  if (!seen.has('ANTHROPIC_API_KEY') && CONFIG.anthropicApiKey) {
-    envVars.push({ name: 'ANTHROPIC_API_KEY', value: CONFIG.anthropicApiKey });
-  }
-  if (!seen.has('OPENAI_API_KEY') && CONFIG.openaiApiKey) {
-    envVars.push({ name: 'OPENAI_API_KEY', value: CONFIG.openaiApiKey });
-  }
-  if (!seen.has('GEMINI_API_KEY') && CONFIG.googleApiKey) {
-    envVars.push({ name: 'GEMINI_API_KEY', value: CONFIG.googleApiKey });
-  }
-
   return envVars;
 }
 

@@ -15,18 +15,7 @@ type: Opaque
 stringData:
   jwt-secret: dev-jwt-secret-not-for-production
   encryption-key: dev-encryption-key-not-for-prod
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: api-keys
-  namespace: goldilocks
-type: Opaque
-stringData:
-  anthropic: "%s"
-  openai: "%s"
-  google: "%s"
-""" % (os.getenv('ANTHROPIC_API_KEY', ''), os.getenv('OPENAI_API_KEY', ''), os.getenv('GOOGLE_API_KEY', ''))))
+"""))
 
 # ── k8s Infrastructure ──
 k8s_yaml([

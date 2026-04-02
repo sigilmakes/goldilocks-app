@@ -47,12 +47,7 @@ spec:
                 secretKeyRef:
                   name: app-secrets
                   key: encryption-key
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: api-keys
-                  key: anthropic
-                  optional: true
+
           volumeMounts:
             - name: data
               mountPath: /data

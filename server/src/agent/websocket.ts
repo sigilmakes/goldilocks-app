@@ -33,6 +33,8 @@ interface ClientState {
   conversationId: string | null;
   unsubscribe: (() => void) | null;
   isProcessing: boolean;
+  /** Track whether text deltas were received for the current message. */
+  receivedTextDelta: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +60,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
  *   - tool_execution_start/update/end
  *   - message_end, agent_end
  */
-function mapBridgeEvent(event: BridgeEvent, ws: WebSocket): void {
+function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): void {
   try {
     switch (event.type) {
       case 'message_update': {
@@ -67,6 +69,7 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket): void {
           delta?: string;
         } | undefined;
         if (delta?.type === 'text_delta' && delta.delta) {
+          state.receivedTextDelta = true;
           send(ws, { type: 'text_delta', delta: delta.delta });
         } else if (delta?.type === 'thinking_delta' && delta.delta) {
           send(ws, { type: 'thinking_delta', delta: delta.delta });
@@ -75,19 +78,21 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket): void {
       }
 
       case 'message_end': {
-        // Fallback: if the model didn't stream text_deltas, extract from message_end
-        const msg = event.message as {
-          role?: string;
-          content?: Array<{ type: string; text?: string }>;
-        } | undefined;
-        if (msg?.role === 'assistant' && Array.isArray(msg.content)) {
-          const textBlocks = msg.content.filter((b) => b.type === 'text');
-          const fullText = textBlocks.map((b) => b.text ?? '').join('');
-          if (fullText) {
-            // Send the full text as a delta — the frontend accumulates it
-            send(ws, { type: 'text_delta', delta: fullText });
+        // Fallback: extract text from message_end ONLY if no deltas were streamed
+        if (!state.receivedTextDelta) {
+          const msg = event.message as {
+            role?: string;
+            content?: Array<{ type: string; text?: string }>;
+          } | undefined;
+          if (msg?.role === 'assistant' && Array.isArray(msg.content)) {
+            const textBlocks = msg.content.filter((b) => b.type === 'text');
+            const fullText = textBlocks.map((b) => b.text ?? '').join('');
+            if (fullText) {
+              send(ws, { type: 'text_delta', delta: fullText });
+            }
           }
         }
+        state.receivedTextDelta = false;
         send(ws, { type: 'message_end' });
         break;
       }
@@ -144,6 +149,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
       conversationId: null,
       unsubscribe: null,
       isProcessing: false,
+      receivedTextDelta: false,
     };
 
     const cleanup = () => {
@@ -202,7 +208,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
 
               // Subscribe to bridge events BEFORE switching session
               const unsubscribe = await sessionManager.subscribe(state.user.id, (event: BridgeEvent) => {
-                mapBridgeEvent(event, ws);
+                mapBridgeEvent(event, ws, state);
               });
               state.unsubscribe = unsubscribe;
 
