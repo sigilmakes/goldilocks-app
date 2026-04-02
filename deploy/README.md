@@ -52,10 +52,10 @@ cluster. Same code, same manifests.
 
 ```bash
 # One-time: create kind cluster
-bash deploy/setup-dev.sh
+npm run dev:setup
 
 # Start everything
-tilt up
+npm run dev
 ```
 
 Tilt handles:
@@ -68,12 +68,12 @@ Tilt handles:
 ### Daily workflow
 
 ```bash
-tilt up                         # Start dev environment
+npm run dev                     # Start dev environment (tilt up)
 # Edit code — Tilt syncs changes automatically
 # Frontend: Vite HMR (sub-second)
 # Backend: tsx watch restarts (1-2s)
-tilt down                       # Stop everything
-kind delete cluster --name goldilocks   # Nuclear option
+npm run dev:down                # Stop everything
+npm run dev:reset               # Nuclear option (delete cluster)
 ```
 
 ### Tilt Dashboard

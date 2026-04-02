@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "tilt up",
     "dev:down": "tilt down",
+    "dev:setup": "kind get clusters | grep -q goldilocks || kind create cluster --name goldilocks",
+    "dev:reset": "kind delete cluster --name goldilocks",
     "dev:server": "npm run dev -w server",
     "dev:frontend": "npm run dev -w frontend",
     "dev:both": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w frontend -- --host 0.0.0.0\"",

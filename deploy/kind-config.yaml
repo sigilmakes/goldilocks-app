@@ -1,6 +1,0 @@
-# kind cluster config for local development.
-# No extraPortMappings — Tilt handles port-forwarding via kubectl.
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
