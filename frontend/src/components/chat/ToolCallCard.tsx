@@ -40,13 +40,13 @@ export default function ToolCallCard({ tool }: { tool: ToolCallWithStream }) {
       {expanded && (
         <div className="px-3 py-2 space-y-2 bg-slate-800/50 overflow-hidden">
           {/* Show streaming content while tool args are being generated */}
-          {tool.streamContent && (
+          {tool.streamContent ? (
             <div className="min-w-0">
               <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
                 {tool.streamContent}
               </pre>
             </div>
-          )}
+          ) : null}
           {/* Show parsed args when available and no stream content */}
           {!tool.streamContent && tool.args && typeof tool.args === 'object' && Object.keys(tool.args as Record<string, unknown>).length > 0 && (
             <div className="min-w-0">
