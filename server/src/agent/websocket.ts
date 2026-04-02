@@ -17,7 +17,7 @@ import { CONFIG } from '../config.js';
 import { sessionManager } from './sessions.js';
 import { getDb } from '../db.js';
 import type { BridgeEvent } from './bridge.js';
-import type { ClientMessage, ServerMessage } from '../shared/types.js';
+import type { ClientMessage, ServerMessage, HistoryMessage } from '../shared/types.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -224,7 +224,31 @@ export function setupWebSocket(wss: WebSocketServer): void {
                 }
               }
 
-              send(ws, { type: 'ready', conversationId: msg.conversationId });
+              // Fetch message history from pi
+              let messages: HistoryMessage[] = [];
+              try {
+                const history = await sessionManager.getMessages(state.user.id) as unknown[];
+                if (Array.isArray(history)) {
+                  messages = history
+                    .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+                    .map((m: any) => {
+                      const text = typeof m.content === 'string'
+                        ? m.content
+                        : Array.isArray(m.content)
+                          ? m.content
+                              .filter((b: any) => b.type === 'text')
+                              .map((b: any) => b.text ?? '')
+                              .join('')
+                          : '';
+                      return { role: m.role as 'user' | 'assistant', text };
+                    })
+                    .filter((m) => m.text);
+                }
+              } catch (err) {
+                console.error('Failed to fetch messages:', err);
+              }
+
+              send(ws, { type: 'ready', conversationId: msg.conversationId, messages });
             } catch (err) {
               console.error('Failed to open session:', err);
               const errorMsg = err instanceof Error ? err.message : 'Failed to open session';

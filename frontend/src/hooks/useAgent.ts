@@ -64,9 +64,25 @@ export function useAgent(conversationId: string | null) {
           setStatus('disconnected');
           break;
 
-        case 'ready':
+        case 'ready': {
+          // Load message history from pi if available
+          if (msg.messages && msg.messages.length > 0) {
+            const chatMessages = msg.messages.map((m) => {
+              if (m.role === 'user') {
+                return { role: 'user' as const, text: m.text, timestamp: Date.now() };
+              } else {
+                return {
+                  role: 'assistant' as const,
+                  blocks: [{ type: 'text' as const, content: m.text }],
+                  timestamp: Date.now(),
+                };
+              }
+            });
+            store.setMessages(chatMessages);
+          }
           setStatus('ready');
           break;
+        }
 
         case 'text_delta':
           store.appendTextDelta(msg.delta);
