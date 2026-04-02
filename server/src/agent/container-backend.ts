@@ -341,7 +341,7 @@ export class ContainerSessionBackend implements SessionBackend {
       stdout.destroy();
       stderr.destroy();
       throw new Error(
-        `Failed to exec into pod ${info.podName}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to exec into pod ${info.podName}: ${err instanceof Error ? err.message : JSON.stringify(err)}`,
       );
     }
   }
