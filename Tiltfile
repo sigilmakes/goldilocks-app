@@ -2,6 +2,41 @@
 
 update_settings(suppress_unused_image_warnings=['goldilocks-agent'])
 
+# ── Dev Secrets ──
+# Generate deterministic dev secrets so `tilt up` works with zero manual steps.
+# Production uses real secrets created out-of-band.
+k8s_yaml(blob("""
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: goldilocks
+type: Opaque
+stringData:
+  jwt-secret: dev-jwt-secret-not-for-production
+  encryption-key: dev-encryption-key-not-for-prod
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-keys
+  namespace: goldilocks
+type: Opaque
+stringData:
+  anthropic: "%s"
+  openai: "%s"
+  google: "%s"
+""" % (os.getenv('ANTHROPIC_API_KEY', ''), os.getenv('OPENAI_API_KEY', ''), os.getenv('GOOGLE_API_KEY', ''))))
+
+# ── k8s Infrastructure ──
+# Namespace and RBAC must exist before the web-app deployment.
+k8s_yaml([
+    'k8s/namespace.yaml',
+    'k8s/rbac.yaml',
+    'k8s/network-policies.yaml',
+    'k8s/resource-quota.yaml',
+])
+
 # ── Web App ──
 docker_build(
     'goldilocks-web',
@@ -45,12 +80,3 @@ docker_build(
     '.',
     dockerfile='deploy/docker/Dockerfile.agent',
 )
-
-# ── k8s Infrastructure ──
-# These are applied once and rarely change.
-k8s_yaml([
-    'k8s/namespace.yaml',
-    'k8s/rbac.yaml',
-    'k8s/network-policies.yaml',
-    'k8s/resource-quota.yaml',
-])

@@ -33,6 +33,10 @@ spec:
               value: "3000"
             - name: K8S_NAMESPACE
               value: goldilocks
+            - name: DATA_DIR
+              value: /data
+            - name: WORKSPACE_ROOT
+              value: /data/workspaces
             - name: AGENT_IMAGE
               value: goldilocks-agent:latest
             - name: JWT_SECRET
@@ -59,8 +63,8 @@ spec:
               cpu: 250m
               memory: 512Mi
             limits:
-              cpu: "1"
-              memory: 1Gi
+              cpu: "2"
+              memory: 2Gi
           readinessProbe:
             httpGet:
               path: /api/health

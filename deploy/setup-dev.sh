@@ -1,6 +1,7 @@
 #!/bin/bash
-# Setup script for local k8s development.
-# Creates a kind cluster — that's it. Tilt handles everything else.
+# Create the kind cluster for local development.
+# After this, run `tilt up` — it handles everything else
+# (namespace, secrets, builds, deploys).
 #
 # Usage: bash deploy/setup-dev.sh
 
@@ -41,3 +42,6 @@ kubectl cluster-info --context "kind-${CLUSTER_NAME}" >/dev/null 2>&1 || {
 echo ""
 echo "=== Ready ==="
 echo "Run: tilt up"
+echo ""
+echo "To pass API keys to the agent:"
+echo "  ANTHROPIC_API_KEY=sk-ant-... tilt up"
