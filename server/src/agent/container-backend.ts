@@ -171,6 +171,7 @@ export class ContainerSessionBackend implements SessionBackend {
           {
             name: 'agent',
             image: this.agentImage,
+            imagePullPolicy: 'Never',
             securityContext: {
               allowPrivilegeEscalation: false,
               capabilities: { drop: ['ALL'] },
@@ -209,9 +210,10 @@ export class ContainerSessionBackend implements SessionBackend {
           },
           {
             name: 'workspace',
-            persistentVolumeClaim: {
-              claimName: `workspace-${userId.replace(/[^a-z0-9]/gi, '').slice(0, 40).toLowerCase()}`,
-            },
+            // In dev, use emptyDir — workspace files are transient per-pod.
+            // The web app's /data/workspaces has the persistent copy.
+            // In production, swap to a PVC per user.
+            emptyDir: {},
           },
         ],
       },
