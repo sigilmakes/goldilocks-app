@@ -14,9 +14,9 @@ interface ModelsState {
   selectedModel: string | null;
   isLoading: boolean;
   error: string | null;
-  
+
   fetch: () => Promise<void>;
-  setSelected: (modelId: string) => void;
+  setSelected: (modelId: string) => Promise<void>;
 }
 
 interface ModelsResponse {
@@ -34,10 +34,9 @@ export const useModelsStore = create<ModelsState>((set) => ({
     try {
       const res = await api.get<ModelsResponse>('/models');
       const models = res.models;
-      set({ 
-        models, 
+      set({
+        models,
         isLoading: false,
-        // Auto-select first model if none selected
         selectedModel: models.length > 0 ? models[0].id : null,
       });
     } catch (err: unknown) {
@@ -46,7 +45,12 @@ export const useModelsStore = create<ModelsState>((set) => ({
     }
   },
 
-  setSelected: (modelId: string) => {
+  setSelected: async (modelId: string) => {
     set({ selectedModel: modelId });
+    try {
+      await api.post('/models/select', { modelId });
+    } catch (err) {
+      console.error('Failed to set model on backend:', err);
+    }
   },
 }));

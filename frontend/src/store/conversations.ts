@@ -6,6 +6,8 @@ export interface Conversation {
   title: string;
   model: string | null;
   provider: string | null;
+  piSessionId: string | null;
+  lastMessagePreview: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -29,20 +31,15 @@ interface ConversationsResponse {
     title: string;
     model: string | null;
     provider: string | null;
+    piSessionId: string | null;
+    lastMessagePreview: string | null;
     created_at: number;
     updated_at: number;
   }>;
 }
 
 interface ConversationResponse {
-  conversation: {
-    id: string;
-    title: string;
-    model: string | null;
-    provider: string | null;
-    createdAt: number;
-    updatedAt: number;
-  };
+  conversation: Conversation;
 }
 
 export const useConversationsStore = create<ConversationsState>((set) => ({
@@ -61,6 +58,8 @@ export const useConversationsStore = create<ConversationsState>((set) => ({
           title: c.title,
           model: c.model,
           provider: c.provider,
+          piSessionId: c.piSessionId,
+          lastMessagePreview: c.lastMessagePreview,
           createdAt: c.created_at,
           updatedAt: c.updated_at,
         })),
