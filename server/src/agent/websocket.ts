@@ -67,12 +67,50 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
         const delta = event.assistantMessageEvent as {
           type?: string;
           delta?: string;
+          contentIndex?: number;
+          toolCall?: { id?: string; name?: string; arguments?: string };
+          partial?: { id?: string; name?: string; arguments?: string };
         } | undefined;
-        if (delta?.type === 'text_delta' && delta.delta) {
+        if (!delta) break;
+
+        if (delta.type === 'text_delta' && delta.delta) {
           state.receivedTextDelta = true;
           send(ws, { type: 'text_delta', delta: delta.delta });
-        } else if (delta?.type === 'thinking_delta' && delta.delta) {
+        } else if (delta.type === 'thinking_delta' && delta.delta) {
           send(ws, { type: 'thinking_delta', delta: delta.delta });
+        } else if (delta.type === 'toolcall_start') {
+          // Tool call arguments are starting to stream
+          const tc = delta.partial ?? delta.toolCall;
+          if (tc) {
+            send(ws, {
+              type: 'tool_start',
+              toolName: tc.name ?? 'unknown',
+              toolCallId: tc.id ?? `tc_${Date.now()}`,
+              args: {},
+            });
+          }
+        } else if (delta.type === 'toolcall_end') {
+          // Tool call arguments finished streaming — send the full args
+          const tc = delta.toolCall;
+          if (tc) {
+            try {
+              const args = tc.arguments ? JSON.parse(tc.arguments) : {};
+              send(ws, {
+                type: 'tool_start',
+                toolName: tc.name ?? 'unknown',
+                toolCallId: tc.id ?? `tc_${Date.now()}`,
+                args,
+              });
+            } catch {
+              // args not valid JSON, send raw
+              send(ws, {
+                type: 'tool_start',
+                toolName: tc.name ?? 'unknown',
+                toolCallId: tc.id ?? `tc_${Date.now()}`,
+                args: { raw: tc.arguments },
+              });
+            }
+          }
         }
         break;
       }
