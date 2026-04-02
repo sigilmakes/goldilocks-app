@@ -70,9 +70,11 @@ k8s_resource(
 
 # ── Agent Image ──
 # Not deployed as a k8s resource — web app creates agent pods dynamically.
-# Tilt just builds the image so it's available in kind.
-docker_build(
-    'goldilocks-agent',
-    '.',
-    dockerfile='deploy/docker/Dockerfile.agent',
+# docker_build alone won't load into kind (no k8s resource references it),
+# so we use local_resource to build + explicitly load into kind.
+local_resource(
+    'agent-image',
+    'docker build -t goldilocks-agent:latest -f deploy/docker/Dockerfile.agent . && kind load docker-image goldilocks-agent:latest --name goldilocks',
+    deps=['deploy/docker/Dockerfile.agent'],
+    labels=['build'],
 )

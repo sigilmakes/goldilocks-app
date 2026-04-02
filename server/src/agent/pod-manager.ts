@@ -181,10 +181,26 @@ export class PodManager {
     const name = podName(userId);
     const record = this.pods.get(userId);
 
-    // If we have a running record, just touch it
+    // If we have a running record, verify the pod still exists in k8s
     if (record?.status === 'running') {
-      record.lastActive = Date.now();
-      return name;
+      try {
+        const coreApi = getCoreApi();
+        const pod = await coreApi.readNamespacedPod({ name, namespace: NAMESPACE });
+        if (pod.status?.phase === 'Running') {
+          record.lastActive = Date.now();
+          return name;
+        }
+        // Pod exists but not running — clear the record and recreate
+        log('WARN', `Pod ${name} recorded as running but is ${pod.status?.phase}, recreating`);
+        this.pods.delete(userId);
+      } catch (err) {
+        if (isK8sNotFound(err)) {
+          log('WARN', `Pod ${name} recorded as running but not found in k8s, recreating`);
+          this.pods.delete(userId);
+        } else {
+          throw err;
+        }
+      }
     }
 
     // Dedup concurrent calls for the same user
@@ -355,7 +371,16 @@ export class PodManager {
         },
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      // k8s Exec errors are often ErrorEvent or plain objects — extract message robustly
+      let msg: string;
+      if (err instanceof Error) {
+        msg = err.message;
+      } else if (err && typeof err === 'object') {
+        const e = err as Record<string, unknown>;
+        msg = (e.message as string) ?? (e.error as string) ?? JSON.stringify(err);
+      } else {
+        msg = String(err);
+      }
       log('ERROR', `Exec failed in pod ${name}: ${msg}`);
       stdin.destroy();
       stdout.destroy();
