@@ -14,6 +14,17 @@ Goldilocks pairs an AI chat assistant with domain-specific tools to help computa
 - **Multi-provider LLM support** — Bring your own API keys for Anthropic, OpenAI, or Google. Switch models mid-conversation.
 - **Per-user isolation** — Each user gets their own k8s pod with a persistent home directory.
 
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | React 19, Vite 6, Tailwind CSS 4, Zustand 5, React Router 7 |
+| Backend | Express 5, TypeScript, better-sqlite3, WebSocket (ws) |
+| Agent | [Pi SDK](https://github.com/mariozechner/pi-coding-agent) via JSON-RPC |
+| Auth | JWT, bcrypt, AES-256-GCM encrypted API key storage |
+| Infrastructure | Kubernetes (`@kubernetes/client-node`), kind + Tilt for local dev |
+| Visualisation | 3Dmol.js, Mermaid |
+
 ## Quick Start
 
 Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), [Tilt](https://docs.tilt.dev/install.html), Node.js 22+, and at least one LLM API key.
