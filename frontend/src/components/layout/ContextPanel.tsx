@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/auth';
 import { useToastStore } from '../../store/toast';
 import { FileListSkeleton } from '../ui/Skeleton';
 import StructureViewer from '../science/StructureViewer';
+import PredictionSummary from '../science/PredictionSummary';
 
 type Tab = 'structure' | 'parameters' | 'files';
 
@@ -88,6 +89,9 @@ function StructureTab() {
           </p>
         </div>
       )}
+
+      {/* Prediction summary (populated when predict tool runs) */}
+      <PredictionSummary />
     </div>
   );
 }

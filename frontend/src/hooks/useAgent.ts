@@ -3,26 +3,25 @@ import { useAuthStore } from '../store/auth';
 import { useChatStore } from '../store/chat';
 import type { ServerMessage } from '../../../shared/types';
 
+export type AgentStatus = 'disconnected' | 'connecting' | 'authenticating' | 'opening' | 'ready';
+
 export function useAgent(conversationId: string | null) {
   const ws = useRef<WebSocket | null>(null);
   const token = useAuthStore((s) => s.token);
-  const [isConnected, setIsConnected] = useState(false);
-  const [isReady, setIsReady] = useState(false);
+  const [status, setStatus] = useState<AgentStatus>('disconnected');
   const [error, setError] = useState<string | null>(null);
-  
-  // Generation counter to detect stale connections after rapid switches (§4.1)
+
+  // Generation counter to detect stale connections after rapid switches
   const generationRef = useRef(0);
 
   useEffect(() => {
     const generation = ++generationRef.current;
     if (!conversationId || !token) {
-      setIsConnected(false);
-      setIsReady(false);
+      setStatus('disconnected');
       return;
     }
 
-    // Don't clear messages — Sidebar.loadConversation() handles that
-    setIsReady(false);
+    setStatus('connecting');
     setError(null);
 
     // Close existing connection
@@ -35,9 +34,8 @@ export function useAgent(conversationId: string | null) {
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     socket.onopen = () => {
-      setIsConnected(true);
+      setStatus('authenticating');
       setError(null);
-      // Authenticate
       socket.send(JSON.stringify({ type: 'auth', token }));
     };
 
@@ -50,24 +48,24 @@ export function useAgent(conversationId: string | null) {
         return;
       }
 
-      // Discard messages from stale connections (§4.1)
+      // Discard messages from stale connections
       if (generation !== generationRef.current) return;
 
       const store = useChatStore.getState();
 
       switch (msg.type) {
         case 'auth_ok':
-          // Use the conversationId captured at effect creation, not a ref
+          setStatus('opening');
           socket.send(JSON.stringify({ type: 'open', conversationId }));
           break;
 
         case 'auth_fail':
           setError(msg.error);
-          setIsConnected(false);
+          setStatus('disconnected');
           break;
 
         case 'ready':
-          setIsReady(true);
+          setStatus('ready');
           break;
 
         case 'text_delta':
@@ -106,13 +104,12 @@ export function useAgent(conversationId: string | null) {
     };
 
     socket.onclose = () => {
-      setIsConnected(false);
-      setIsReady(false);
+      setStatus('disconnected');
     };
 
     socket.onerror = () => {
       setError('WebSocket connection error');
-      setIsConnected(false);
+      setStatus('disconnected');
     };
 
     ws.current = socket;
@@ -121,7 +118,9 @@ export function useAgent(conversationId: string | null) {
       socket.close();
       ws.current = null;
     };
-  }, [conversationId, token]); // Only re-run when these change
+  }, [conversationId, token]);
+
+  const isReady = status === 'ready';
 
   const send = useCallback((text: string, files?: string[]) => {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !isReady) {
@@ -138,7 +137,6 @@ export function useAgent(conversationId: string | null) {
       return;
     }
     ws.current.send(JSON.stringify({ type: 'abort' }));
-    // Immediately update UI so the user sees the stop take effect
     const store = useChatStore.getState();
     store.endAgent();
   }, []);
@@ -146,8 +144,9 @@ export function useAgent(conversationId: string | null) {
   return {
     send,
     abort,
-    isConnected,
+    status,
     isReady,
+    isConnected: status !== 'disconnected',
     error,
   };
 }

@@ -9,6 +9,7 @@ export const CONFIG = {
   
   // Paths
   dataDir: process.env.DATA_DIR ?? './data',
+  workspaceRoot: process.env.WORKSPACE_ROOT ?? './data/workspaces',
   
   // Auth
   get jwtSecret(): string {

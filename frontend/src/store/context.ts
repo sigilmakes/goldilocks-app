@@ -1,17 +1,24 @@
-/**
- * Context store — placeholder for science-specific UI state.
- *
- * In v2, most of this functionality moves to pi tools.
- * This store remains for any future context panel state.
- */
-
 import { create } from 'zustand';
 
+export interface PredictionResult {
+  kdistMedian: number;
+  kdistLower: number;
+  kdistUpper: number;
+  kGrid: [number, number, number];
+  isMetal: boolean;
+  model: 'ALIGNN' | 'RF';
+  confidence: number;
+}
+
 interface ContextState {
-  // Placeholder — will be populated as pi tools are implemented
+  // Last prediction result (set by ToolCallCard when predict tool completes)
+  prediction: PredictionResult | null;
+  setPrediction: (p: PredictionResult | null) => void;
   reset: () => void;
 }
 
 export const useContextStore = create<ContextState>((set) => ({
-  reset: () => set({}),
+  prediction: null,
+  setPrediction: (p) => set({ prediction: p }),
+  reset: () => set({ prediction: null }),
 }));
