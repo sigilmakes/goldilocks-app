@@ -4,7 +4,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import Login from './pages/Login';
 import Workspace from './pages/Workspace';
 import Settings from './pages/Settings';
-import Docs from './pages/Docs';
+
 import ToastContainer from './components/ui/Toast';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -30,14 +30,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/docs"
-          element={
-            <ProtectedRoute>
-              <Docs />
-            </ProtectedRoute>
-          }
-        />
+
         <Route
           path="/*"
           element={

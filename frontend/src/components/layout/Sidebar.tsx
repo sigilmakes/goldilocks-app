@@ -1,5 +1,5 @@
-import { Plus, MessageSquare, Folder, ChevronDown, Trash2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Plus, MessageSquare, Trash2 } from 'lucide-react';
+import { useEffect } from 'react';
 import { useConversationsStore, type Conversation } from '../../store/conversations';
 import { useChatStore } from '../../store/chat';
 import { useFilesStore } from '../../store/files';
@@ -7,8 +7,6 @@ import { useToastStore } from '../../store/toast';
 import { ConversationListSkeleton } from '../ui/Skeleton';
 
 export default function Sidebar() {
-  const [libraryOpen, setLibraryOpen] = useState(true);
-  
   const {
     conversations,
     activeConversationId,
@@ -64,8 +62,6 @@ export default function Sidebar() {
     }
   };
 
-  const structures: Array<{ id: string; name: string; formula: string }> = [];
-
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -113,45 +109,6 @@ export default function Sidebar() {
                 formatDate={formatDate}
               />
             ))}
-          </div>
-        )}
-      </div>
-
-      {/* Divider */}
-      <div className="border-t border-slate-700 my-3" />
-
-      {/* Structure library */}
-      <div>
-        <button
-          onClick={() => setLibraryOpen(!libraryOpen)}
-          className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-slate-700 rounded-lg transition-colors"
-        >
-          <Folder className="w-4 h-4 text-slate-400" />
-          <span className="text-sm text-slate-300 flex-1">Structure Library</span>
-          <ChevronDown
-            className={`w-4 h-4 text-slate-400 transition-transform ${
-              libraryOpen ? '' : '-rotate-90'
-            }`}
-          />
-        </button>
-        
-        {libraryOpen && (
-          <div className="mt-1 space-y-1 pl-2">
-            {structures.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-slate-500">No saved structures</div>
-            ) : (
-              structures.map((struct) => (
-                <button
-                  key={struct.id}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-700 transition-colors text-left"
-                >
-                  <div className="w-2 h-2 bg-amber-500 rounded-full" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-slate-300 truncate">{struct.name}</div>
-                  </div>
-                </button>
-              ))
-            )}
           </div>
         )}
       </div>
