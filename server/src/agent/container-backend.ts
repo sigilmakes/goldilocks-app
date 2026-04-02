@@ -272,13 +272,9 @@ export class ContainerSessionBackend implements SessionBackend {
       connected: false,
     };
 
-    // Collect stderr for debugging
-    let stderrBuf = '';
+    // Log stderr from agent pod line-by-line (useful for debugging)
     stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString();
-      stderrBuf += text;
-      // Log stderr from agent pod (useful for debugging)
-      for (const line of text.split('\n').filter(Boolean)) {
+      for (const line of chunk.toString().split('\n').filter(Boolean)) {
         console.log(`[agent:${info.podName}:stderr] ${line}`);
       }
     });
@@ -469,6 +465,7 @@ export class ContainerSessionBackend implements SessionBackend {
             volumeMounts: [
               { name: 'scratch', mountPath: '/tmp' },
               { name: 'workspace', mountPath: '/work' },
+              { name: 'pi-config', mountPath: '/home/node/.pi' },
             ],
             resources: {
               requests: { cpu: '250m', memory: '256Mi' },
@@ -483,6 +480,11 @@ export class ContainerSessionBackend implements SessionBackend {
           },
           {
             name: 'workspace',
+            emptyDir: {},
+          },
+          {
+            name: 'pi-config',
+            // Pi SDK writes config/sessions/settings to ~/.pi/agent/
             emptyDir: {},
           },
         ],
@@ -560,18 +562,9 @@ export class ContainerSessionBackend implements SessionBackend {
 
         const rpc = info.rpc;
 
-        // Send the prompt command — RPC responds immediately
-        const response = await self.sendRpcCommand(rpc, {
-          type: 'prompt',
-          message: text,
-        });
-        if (response && !response.success) {
-          throw new Error(response.error || 'Prompt failed');
-        }
-
-        // Now wait for agent_end event, which signals the prompt is fully complete.
-        // Events are streamed to subscribers during this wait.
-        await new Promise<void>((resolve, reject) => {
+        // Register agent_end listener BEFORE sending the command to avoid a
+        // race where a fast-completing prompt fires agent_end before we listen.
+        const agentDone = new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
             cleanup();
             reject(new Error('Prompt timed out waiting for agent_end'));
@@ -591,6 +584,19 @@ export class ContainerSessionBackend implements SessionBackend {
 
           rpc.subscribers.add(listener);
         });
+
+        // Send the prompt command — RPC responds immediately
+        const response = await self.sendRpcCommand(rpc, {
+          type: 'prompt',
+          message: text,
+        });
+        if (response && !response.success) {
+          throw new Error(response.error || 'Prompt failed');
+        }
+
+        // Wait for agent_end event, which signals the prompt is fully complete.
+        // Events are streamed to subscribers during this wait.
+        await agentDone;
       },
 
       async abort() {
