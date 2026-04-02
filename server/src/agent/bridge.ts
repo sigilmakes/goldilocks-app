@@ -276,7 +276,10 @@ export class Bridge extends EventEmitter {
       return;
     }
 
-    this.log('RECV', `type=${event.type}${event.id ? ` id=${String(event.id).slice(0, 8)}` : ''}`);
+    const dataPreview = event.type === 'response' && event.data
+      ? ` data=${JSON.stringify(event.data).slice(0, 200)}`
+      : '';
+    this.log('RECV', `type=${event.type}${event.id ? ` id=${String(event.id).slice(0, 8)}` : ''}${dataPreview}`);
 
     // RPC response — resolve pending promise
     if (event.type === 'response' && event.id && this.pending.has(event.id as string)) {

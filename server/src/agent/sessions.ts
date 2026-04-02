@@ -90,23 +90,26 @@ class SessionManager {
   }
 
   /**
-   * Switch to a pi session (conversation). Creates a new one if piSessionId is null.
-   * Returns the pi session ID.
+   * Switch to a pi session (conversation). Creates a new one if sessionPath is null.
+   * Returns the pi session file path (used to switch back later).
    */
-  async switchSession(userId: string, piSessionId: string | null): Promise<string> {
+  async switchSession(userId: string, sessionPath: string | null): Promise<string> {
     const bridge = await this.getOrCreateBridge(userId);
     const session = this.sessions.get(userId)!;
 
-    if (piSessionId) {
-      await bridge.rpc('switch_session', { sessionId: piSessionId });
-      session.activeConversationPiSessionId = piSessionId;
-      return piSessionId;
+    if (sessionPath) {
+      // Resume existing session by path
+      await bridge.rpc('switch_session', { sessionPath });
     } else {
-      const result = await bridge.rpc('new_session', {}) as { sessionId?: string } | undefined;
-      const newId = result?.sessionId ?? null;
-      session.activeConversationPiSessionId = newId;
-      return newId ?? '';
+      // Create a new session
+      await bridge.rpc('new_session', {});
     }
+
+    // Get the session file path from pi's state
+    const state = await bridge.rpc('get_state', {}) as Record<string, unknown> | undefined;
+    const newPath = (state?.sessionFile as string) ?? '';
+    session.activeConversationPiSessionId = newPath;
+    return newPath;
   }
 
   /**

@@ -213,15 +213,16 @@ export function setupWebSocket(wss: WebSocketServer): void {
               state.unsubscribe = unsubscribe;
 
               // Switch to the pi session (or create if no pi_session_id yet)
-              if (row.pi_session_id) {
-                await sessionManager.switchSession(state.user.id, row.pi_session_id);
-              } else {
-                const piSessionId = await sessionManager.switchSession(state.user.id, null);
-                if (piSessionId) {
-                  db.prepare(
-                    'UPDATE conversations SET pi_session_id = ? WHERE id = ?'
-                  ).run(piSessionId, msg.conversationId);
-                }
+              const sessionPath = await sessionManager.switchSession(
+                state.user.id,
+                row.pi_session_id, // null on first open → creates new session
+              );
+
+              // Store the session path if this is a new conversation
+              if (!row.pi_session_id && sessionPath) {
+                db.prepare(
+                  'UPDATE conversations SET pi_session_id = ? WHERE id = ?'
+                ).run(sessionPath, msg.conversationId);
               }
 
               // Fetch message history from pi
