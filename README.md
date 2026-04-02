@@ -1,4 +1,4 @@
-# Goldilocks
+# Goldilocks Web App
 
 AI-powered web application for generating Quantum ESPRESSO input files with ML-predicted k-point grids. Getting your DFT parameters *just right*.
 
