@@ -71,9 +71,28 @@ export function useAgent(conversationId: string | null) {
               if (m.role === 'user') {
                 return { role: 'user' as const, text: m.text, timestamp: Date.now() };
               } else {
+                const blocks: import('../store/chat').AssistantBlock[] = [];
+                if (m.text) {
+                  blocks.push({ type: 'text' as const, content: m.text });
+                }
+                if (m.toolCalls) {
+                  for (const tc of m.toolCalls) {
+                    blocks.push({
+                      type: 'tool_call' as const,
+                      data: {
+                        toolCallId: tc.toolCallId,
+                        toolName: tc.toolName,
+                        args: tc.args,
+                        result: tc.result,
+                        isError: tc.isError,
+                        status: 'done' as const,
+                      },
+                    });
+                  }
+                }
                 return {
                   role: 'assistant' as const,
-                  blocks: [{ type: 'text' as const, content: m.text }],
+                  blocks,
                   timestamp: Date.now(),
                 };
               }

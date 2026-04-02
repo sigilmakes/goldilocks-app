@@ -37,4 +37,11 @@ export type ServerMessage =
 export interface HistoryMessage {
   role: 'user' | 'assistant';
   text: string;
+  toolCalls?: Array<{
+    toolCallId: string;
+    toolName: string;
+    args: unknown;
+    result?: string;
+    isError?: boolean;
+  }>;
 }

@@ -97,26 +97,8 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
             content: delta.delta,
           });
         } else if (delta.type === 'toolcall_end') {
-          const tc = delta.toolCall;
-          const toolCallId = tc?.id ?? state.currentToolCallId ?? `tc_${Date.now()}`;
-          if (tc) {
-            try {
-              const args = tc.arguments ? JSON.parse(tc.arguments) : {};
-              send(ws, {
-                type: 'tool_start',
-                toolName: tc.name ?? 'unknown',
-                toolCallId,
-                args,
-              });
-            } catch {
-              send(ws, {
-                type: 'tool_start',
-                toolName: tc.name ?? 'unknown',
-                toolCallId,
-                args: { raw: tc.arguments },
-              });
-            }
-          }
+          // Don't send another tool_start — the card already exists from toolcall_start.
+          // Just update the args via tool_end when execution completes.
           state.currentToolCallId = null;
         }
         break;
@@ -143,12 +125,8 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
       }
 
       case 'tool_execution_start':
-        send(ws, {
-          type: 'tool_start',
-          toolName: event.toolName as string,
-          toolCallId: event.toolCallId as string,
-          args: event.args,
-        });
+        // Don't send tool_start again — we already sent it from toolcall_start.
+        // The card exists. tool_execution_start means the tool is now executing.
         break;
 
       case 'tool_execution_update':
@@ -279,20 +257,43 @@ export function setupWebSocket(wss: WebSocketServer): void {
                 const msgList = Array.isArray(history) ? history
                   : (history as Record<string, unknown>)?.messages;
                 if (Array.isArray(msgList)) {
-                  messages = msgList
-                    .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-                    .map((m: any) => {
+                  for (const m of msgList as any[]) {
+                    if (m.role === 'user') {
                       const text = typeof m.content === 'string'
                         ? m.content
                         : Array.isArray(m.content)
-                          ? m.content
-                              .filter((b: any) => b.type === 'text')
-                              .map((b: any) => b.text ?? '')
-                              .join('')
+                          ? m.content.filter((b: any) => b.type === 'text').map((b: any) => b.text ?? '').join('')
                           : '';
-                      return { role: m.role as 'user' | 'assistant', text };
-                    })
-                    .filter((m) => m.text);
+                      if (text) messages.push({ role: 'user', text });
+                    } else if (m.role === 'assistant' && Array.isArray(m.content)) {
+                      // Extract text blocks
+                      const textParts = m.content.filter((b: any) => b.type === 'text').map((b: any) => b.text ?? '');
+                      const text = textParts.join('');
+                      // Extract tool calls
+                      const toolCalls = m.content
+                        .filter((b: any) => b.type === 'toolCall')
+                        .map((b: any) => ({
+                          toolCallId: b.id ?? '',
+                          toolName: b.name ?? 'tool',
+                          args: b.arguments ? (typeof b.arguments === 'string' ? (() => { try { return JSON.parse(b.arguments); } catch { return { raw: b.arguments }; } })() : b.arguments) : {},
+                        }));
+                      if (text || toolCalls.length > 0) {
+                        messages.push({ role: 'assistant', text, toolCalls });
+                      }
+                    } else if (m.role === 'toolResult') {
+                      // Attach tool results to the previous assistant message's tool call
+                      const prev = messages[messages.length - 1];
+                      if (prev?.role === 'assistant' && prev.toolCalls) {
+                        const tc = prev.toolCalls.find((t: any) => t.toolCallId === m.toolCallId);
+                        if (tc) {
+                          tc.result = Array.isArray(m.content)
+                            ? m.content.filter((b: any) => b.type === 'text').map((b: any) => b.text ?? '').join('')
+                            : typeof m.content === 'string' ? m.content : '';
+                          tc.isError = m.isError ?? false;
+                        }
+                      }
+                    }
+                  }
                 }
               } catch (err) {
                 console.error('Failed to fetch messages:', err);
