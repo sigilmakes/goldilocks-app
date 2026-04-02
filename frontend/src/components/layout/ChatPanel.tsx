@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Paperclip, Sparkles, Square, Loader2 } from 'lucide-react';
 import { useChatStore } from '../../store/chat';
 import { useConversationsStore } from '../../store/conversations';
-import { useAuthStore } from '../../store/auth';
 import { useFilesStore } from '../../store/files';
 import { useAgent } from '../../hooks/useAgent';
 import { ChatSkeleton } from '../ui/Skeleton';
@@ -22,35 +21,18 @@ export default function ChatPanel() {
   const { send, abort, isReady, error } = useAgent(activeConversationId);
 
   const handleFileAttach = useCallback(async (files: FileList | null) => {
-    if (!files || !activeConversationId) return;
-    const token = useAuthStore.getState().token;
+    if (!files) return;
+    const filesStore = useFilesStore.getState();
     for (const file of Array.from(files)) {
       try {
-        // Read as base64 and upload
-        const content = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve((reader.result as string).split(',')[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-        await fetch(`/api/conversations/${activeConversationId}/upload`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ filename: file.name, content }),
-        });
-        // Mention the file in the chat
+        await filesStore.upload(file);
+        // Mention the file in the chat so pi knows about it
         send(`I've uploaded ${file.name}`);
       } catch (err) {
         console.error('Upload failed:', err);
       }
     }
-    // Refresh files list
-    const filesStore = useFilesStore.getState();
-    filesStore.fetch(activeConversationId);
-  }, [activeConversationId, send]);
+  }, [send]);
 
   // Auto-scroll to bottom
   useEffect(() => {

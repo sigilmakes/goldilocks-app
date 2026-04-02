@@ -63,8 +63,8 @@ app.use('/api/auth', authRoutes);
 // Conversation routes
 app.use('/api/conversations', conversationRoutes);
 
-// File routes (nested under conversations)
-app.use('/api/conversations', fileRoutes);
+// File routes (user workspace on PVC)
+app.use('/api/files', fileRoutes);
 
 // Model routes
 app.use('/api/models', modelRoutes);

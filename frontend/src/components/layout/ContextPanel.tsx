@@ -1,20 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Box, Settings2, Files, Upload, Download, Trash2, Loader2, FileText, Zap } from 'lucide-react';
-import { useConversationsStore } from '../../store/conversations';
+import { Box, Settings2, Files, Upload, Download, Trash2, FileText } from 'lucide-react';
 import { useFilesStore, type WorkspaceFile } from '../../store/files';
 import { useAuthStore } from '../../store/auth';
-import { useContextStore } from '../../store/context';
-import { api } from '../../api/client';
-import StructureViewer from '../science/StructureViewer';
-import PredictionSummary from '../science/PredictionSummary';
 import { useToastStore } from '../../store/toast';
 import { FileListSkeleton } from '../ui/Skeleton';
+import StructureViewer from '../science/StructureViewer';
 
 type Tab = 'structure' | 'parameters' | 'files';
 
 export default function ContextPanel() {
   const [activeTab, setActiveTab] = useState<Tab>('files');
-  const activeConversationId = useConversationsStore((s) => s.activeConversationId);
 
   const tabs = [
     { id: 'structure' as Tab, label: 'Structure', icon: Box },
@@ -44,37 +39,35 @@ export default function ContextPanel() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'structure' && <StructureTab conversationId={activeConversationId} />}
-        {activeTab === 'parameters' && <ParametersTab conversationId={activeConversationId} />}
-        {activeTab === 'files' && <FilesTab conversationId={activeConversationId} />}
+        {activeTab === 'structure' && <StructureTab />}
+        {activeTab === 'parameters' && <ParametersTab />}
+        {activeTab === 'files' && <FilesTab />}
       </div>
     </div>
   );
 }
 
-function StructureTab({ conversationId }: { conversationId: string | null }) {
+// ---------------------------------------------------------------------------
+// Structure Tab
+// ---------------------------------------------------------------------------
+
+function StructureTab() {
   const [cifData, setCifData] = useState<string | null>(null);
-  const structure = useContextStore((s) => s.structure);
   const files = useFilesStore((s) => s.files);
 
   // Load CIF data from workspace files
   useEffect(() => {
-    if (!conversationId) {
-      setCifData(null);
-      return;
-    }
     const cifFile = files.find((f) => f.name.toLowerCase().endsWith('.cif'));
     if (cifFile) {
-      // Need auth token for the file download endpoint
       const token = useAuthStore.getState().token;
-      fetch(`/api/conversations/${conversationId}/files/${cifFile.name}`, {
+      fetch(`/api/files/${cifFile.name}/content`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.text();
+          return res.json();
         })
-        .then((text) => setCifData(text))
+        .then((data) => setCifData(data.content))
         .catch((err) => {
           console.error('Failed to load CIF:', err);
           setCifData(null);
@@ -82,79 +75,30 @@ function StructureTab({ conversationId }: { conversationId: string | null }) {
     } else {
       setCifData(null);
     }
-  }, [conversationId, files]);
+  }, [files]);
 
   return (
     <div className="space-y-4">
-      {/* 3D viewer */}
       <StructureViewer cifData={cifData} />
 
-      {/* Structure info */}
-      {structure ? (
+      {!cifData && (
         <div className="bg-slate-700/50 rounded-lg p-3">
-          <h3 className="text-sm font-medium text-white mb-2">Structure Info</h3>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <span className="text-slate-400">Formula</span>
-            <span className="text-white font-medium">{structure.formula}</span>
-            <span className="text-slate-400">Space group</span>
-            <span className="text-white">{structure.spacegroup} (#{structure.spacegroupNumber})</span>
-            <span className="text-slate-400">Lattice</span>
-            <span className="text-white">{structure.latticeSystem}</span>
-            <span className="text-slate-400">a, b, c</span>
-            <span className="text-white">{structure.a.toFixed(3)}, {structure.b.toFixed(3)}, {structure.c.toFixed(3)} Å</span>
-            <span className="text-slate-400">Volume</span>
-            <span className="text-white">{structure.volume.toFixed(2)} ų</span>
-            <span className="text-slate-400">Atoms</span>
-            <span className="text-white">{structure.natoms}</span>
-            <span className="text-slate-400">Density</span>
-            <span className="text-white">{structure.density.toFixed(3)} g/cm³</span>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-slate-700/50 rounded-lg p-3">
-          <h3 className="text-sm font-medium text-white mb-2">Structure Info</h3>
-          <p className="text-sm text-slate-400">No structure selected</p>
+          <p className="text-sm text-slate-400">
+            Upload a CIF file to visualize the crystal structure.
+          </p>
         </div>
       )}
-
-      {/* Prediction summary */}
-      <PredictionSummary />
     </div>
   );
 }
 
-function ParametersTab({ conversationId }: { conversationId: string | null }) {
-  const {
-    functional, pseudoMode, mlModel, confidence, structure,
-    setFunctional, setPseudoMode, setMlModel, setConfidence, setPrediction,
-  } = useContextStore();
-  const [isGenerating, setIsGenerating] = useState(false);
+// ---------------------------------------------------------------------------
+// Parameters Tab
+// ---------------------------------------------------------------------------
 
-  const handleQuickGenerate = async () => {
-    if (!structure) return;
-    setIsGenerating(true);
-    try {
-      const predictRes = await api.post<{ prediction: unknown }>('/predict', {
-        structurePath: structure.filePath,
-        conversationId,
-        model: mlModel,
-        confidence,
-      });
-      if (predictRes.prediction) {
-        setPrediction(predictRes.prediction as import('../../store/context').PredictionResult);
-      }
-      await api.post('/generate', {
-        structurePath: structure.filePath,
-        conversationId,
-        functional,
-        pseudoMode,
-      });
-    } catch (err) {
-      console.error('Quick generate failed:', err);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+function ParametersTab() {
+  const [functional, setFunctional] = useState<'PBEsol' | 'PBE'>('PBEsol');
+  const [pseudoMode, setPseudoMode] = useState<'efficiency' | 'precision'>('efficiency');
 
   return (
     <div className="space-y-4">
@@ -186,81 +130,48 @@ function ParametersTab({ conversationId }: { conversationId: string | null }) {
         </select>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-slate-300 mb-1.5">
-          ML Model
-        </label>
-        <select
-          value={mlModel}
-          onChange={(e) => setMlModel(e.target.value as 'ALIGNN' | 'RF')}
-          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-        >
-          <option value="ALIGNN">ALIGNN (More accurate)</option>
-          <option value="RF">Random Forest (Faster)</option>
-        </select>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-slate-300 mb-1.5">
-          Confidence Level
-        </label>
-        <select
-          value={String(confidence)}
-          onChange={(e) => setConfidence(Number(e.target.value))}
-          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-        >
-          <option value="0.95">95% (Conservative)</option>
-          <option value="0.90">90%</option>
-          <option value="0.85">85%</option>
-        </select>
-      </div>
-
-      <button
-        disabled={!structure || isGenerating}
-        onClick={handleQuickGenerate}
-        className="w-full py-2 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-600 disabled:text-slate-400 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
-      >
-        {isGenerating ? (
-          <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
-        ) : (
-          <><Zap className="w-4 h-4" /> Quick Generate</>
-        )}
-      </button>
-      {!structure && (
-        <p className="text-xs text-slate-500 text-center">
-          Load a structure to enable quick generation
+      <div className="bg-slate-700/50 rounded-lg p-3">
+        <p className="text-xs text-slate-400">
+          These parameters are available for the agent to use when generating
+          Quantum ESPRESSO input files. Ask the agent to generate an input file
+          and it will use these settings.
         </p>
-      )}
+      </div>
     </div>
   );
 }
 
-function FilesTab({ conversationId }: { conversationId: string | null }) {
+// ---------------------------------------------------------------------------
+// Files Tab
+// ---------------------------------------------------------------------------
+
+function FilesTab() {
   const { files, isLoading, error, fetch, upload, remove } = useFilesStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   useEffect(() => {
-    if (conversationId) {
-      fetch(conversationId);
+    if (isAuthenticated) {
+      fetch();
     }
-  }, [conversationId, fetch]);
+  }, [isAuthenticated, fetch]);
 
   const addToast = useToastStore((s) => s.addToast);
 
   const handleFileSelect = useCallback(async (selectedFiles: FileList | null) => {
-    if (!selectedFiles || !conversationId) return;
-    
+    if (!selectedFiles) return;
+
     for (const file of Array.from(selectedFiles)) {
       try {
-        await upload(conversationId, file);
+        await upload(file);
         addToast(`Uploaded ${file.name}`, 'success');
       } catch (err) {
         console.error('Upload failed:', err);
         addToast(`Failed to upload ${file.name}`, 'error');
       }
     }
-  }, [conversationId, upload, addToast]);
+  }, [upload, addToast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -269,10 +180,9 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
   }, [handleFileSelect]);
 
   const handleDelete = async (filename: string) => {
-    if (!conversationId) return;
     if (confirm(`Delete ${filename}?`)) {
       try {
-        await remove(conversationId, filename);
+        await remove(filename);
         addToast(`Deleted ${filename}`, 'success');
       } catch (err) {
         console.error('Delete failed:', err);
@@ -286,14 +196,6 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
-
-  if (!conversationId) {
-    return (
-      <div className="text-center text-slate-400 py-8">
-        <p className="text-sm">Select a conversation to manage files</p>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
@@ -329,46 +231,39 @@ function FilesTab({ conversationId }: { conversationId: string | null }) {
       )}
 
       {/* File list */}
-      <div>
-        <h3 className="text-sm font-medium text-slate-300 mb-2">Workspace Files</h3>
-        
-        {isLoading ? (
-          <FileListSkeleton count={3} />
-        ) : files.length === 0 ? (
-          <div className="bg-slate-700/50 rounded-lg p-3 text-center">
-            <p className="text-sm text-slate-400">No files in workspace</p>
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {files.map((file) => (
-              <FileItem
-                key={file.name}
-                file={file}
-                conversationId={conversationId}
-                onDelete={() => handleDelete(file.name)}
-                formatSize={formatSize}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {isLoading ? (
+        <FileListSkeleton count={3} />
+      ) : files.length === 0 ? (
+        <div className="bg-slate-700/50 rounded-lg p-3 text-center">
+          <p className="text-sm text-slate-400">No files in workspace</p>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {files.map((file) => (
+            <FileItem
+              key={file.name}
+              file={file}
+              onDelete={() => handleDelete(file.name)}
+              formatSize={formatSize}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function FileItem({
   file,
-  conversationId,
   onDelete,
   formatSize,
 }: {
   file: WorkspaceFile;
-  conversationId: string;
   onDelete: () => void;
   formatSize: (bytes: number) => string;
 }) {
   const isCif = file.name.toLowerCase().endsWith('.cif');
-  
+
   return (
     <div className="flex items-center gap-2 p-2 bg-slate-700/50 rounded-lg group">
       <FileText className={`w-4 h-4 flex-shrink-0 ${isCif ? 'text-amber-500' : 'text-slate-400'}`} />
@@ -379,17 +274,22 @@ function FileItem({
       <button
         onClick={async () => {
           const token = useAuthStore.getState().token;
-          const res = await fetch(`/api/conversations/${conversationId}/files/${file.name}`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          if (!res.ok) return;
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = file.name;
-          a.click();
-          URL.revokeObjectURL(url);
+          try {
+            const res = await window.fetch(`/api/files/${file.name}/content`, {
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+            if (!res.ok) return;
+            const { content } = await res.json();
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            a.click();
+            URL.revokeObjectURL(url);
+          } catch (err) {
+            console.error('Download failed:', err);
+          }
         }}
         className="p-1 opacity-0 group-hover:opacity-100 hover:bg-slate-600 rounded transition-all"
         title="Download"
