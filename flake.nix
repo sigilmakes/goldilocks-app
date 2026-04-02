@@ -35,9 +35,9 @@
           echo ""
           echo "  🔮 goldilocks-app dev shell"
           echo ""
-          echo "  Local dev:   npm install && npm run dev:both"
-          echo "  k8s dev:     npm run dev:setup && tilt up"
-          echo "  Typecheck:   npm run typecheck"
+          echo "  Setup:       npm run dev:setup && npm install"
+          echo "  Dev:         tilt up"
+          echo "  Teardown:    tilt down / npm run dev:reset"
           echo ""
         '';
       };
