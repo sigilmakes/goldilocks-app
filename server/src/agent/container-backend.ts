@@ -335,7 +335,12 @@ export class ContainerSessionBackend implements SessionBackend {
       await sleep(500);
 
       console.log(`[agent:${info.podName}] RPC connection established`);
-    } catch (err) {
+    } catch (err: unknown) {
+      // k8s Exec errors are often ErrorEvent objects with the real error in Symbol(kError)
+      const message = err instanceof Error
+        ? err.message
+        : (err as any)?.message ?? JSON.stringify(err);
+      console.error(`[agent:${info.podName}] exec failed:`, message);
       rpc.stopReading?.();
       stdin.destroy();
       stdout.destroy();
