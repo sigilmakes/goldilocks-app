@@ -22,6 +22,25 @@ import type { SessionBackend, SessionHandle } from './session-backend.js';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
 import { getCoreApi, getKubeConfig } from './k8s-client.js';
 import { CONFIG } from '../config.js';
+import { getDb } from '../db.js';
+import { decrypt } from '../crypto.js';
+import { mkdirSync, appendFileSync } from 'fs';
+import { resolve } from 'path';
+
+// Simple file logger to data/logs/ (survives pod restarts via host bind-mount)
+const logDir = resolve(CONFIG.dataDir, 'logs');
+try { mkdirSync(logDir, { recursive: true }); } catch {}
+function agentLog(podName: string, level: string, msg: string, data?: unknown) {
+  const ts = new Date().toISOString();
+  const line = data
+    ? `[${ts}] [${level}] [${podName}] ${msg} ${JSON.stringify(data)}`
+    : `[${ts}] [${level}] [${podName}] ${msg}`;
+  console[level === 'ERROR' ? 'error' : 'log'](line);
+  try {
+    appendFileSync(resolve(logDir, 'agent.log'), line + '\n');
+    appendFileSync(resolve(logDir, `${ts.slice(0, 10)}.log`), line + '\n');
+  } catch {}
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,6 +90,61 @@ function buildPodName(userId: string, conversationId: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Env var name for each provider's API key. */
+const PROVIDER_ENV_MAP: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  google: 'GEMINI_API_KEY',
+};
+
+/**
+ * Look up a user's encrypted API keys from the DB, decrypt them,
+ * and return as env var entries for the pod spec.
+ * Falls back to server-level keys from CONFIG.
+ */
+function getUserApiKeyEnvVars(userId: string): Array<{ name: string; value: string }> {
+  const envVars: Array<{ name: string; value: string }> = [];
+  const seen = new Set<string>();
+
+  // User keys take priority
+  try {
+    const db = getDb();
+    const rows = db.prepare(
+      'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?'
+    ).all(userId) as Array<{ provider: string; encrypted_key: string }>;
+
+    for (const row of rows) {
+      const envName = PROVIDER_ENV_MAP[row.provider];
+      if (envName) {
+        try {
+          const key = decrypt(row.encrypted_key);
+          if (key) {
+            envVars.push({ name: envName, value: key });
+            seen.add(envName);
+          }
+        } catch (err) {
+          console.error(`Failed to decrypt ${row.provider} key for user ${userId}:`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to query user API keys:', err);
+  }
+
+  // Fall back to server-level keys for any not set by user
+  if (!seen.has('ANTHROPIC_API_KEY') && CONFIG.anthropicApiKey) {
+    envVars.push({ name: 'ANTHROPIC_API_KEY', value: CONFIG.anthropicApiKey });
+  }
+  if (!seen.has('OPENAI_API_KEY') && CONFIG.openaiApiKey) {
+    envVars.push({ name: 'OPENAI_API_KEY', value: CONFIG.openaiApiKey });
+  }
+  if (!seen.has('GEMINI_API_KEY') && CONFIG.googleApiKey) {
+    envVars.push({ name: 'GEMINI_API_KEY', value: CONFIG.googleApiKey });
+  }
+
+  return envVars;
 }
 
 function isK8sNotFound(err: unknown): boolean {
@@ -227,7 +301,7 @@ export class ContainerSessionBackend implements SessionBackend {
       await this.waitForPodReady(name, 60_000);
       info.status = 'running';
 
-      console.log(`Agent pod created: ${name}`);
+      agentLog(name, 'INFO', 'Pod created');
 
       // Establish RPC connection via k8s exec
       await this.connectRpc(info);
@@ -275,7 +349,7 @@ export class ContainerSessionBackend implements SessionBackend {
     // Log stderr from agent pod line-by-line (useful for debugging)
     stderr.on('data', (chunk: Buffer) => {
       for (const line of chunk.toString().split('\n').filter(Boolean)) {
-        console.log(`[agent:${info.podName}:stderr] ${line}`);
+        agentLog(info.podName, 'INFO', 'stderr: ' + line);
       }
     });
 
@@ -297,7 +371,7 @@ export class ContainerSessionBackend implements SessionBackend {
           try {
             sub(data as AgentSessionEvent);
           } catch (err) {
-            console.error(`[agent:${info.podName}] Subscriber error:`, err);
+            agentLog(info.podName, 'ERROR', 'Subscriber error', err);
           }
         }
       } catch {
@@ -317,7 +391,7 @@ export class ContainerSessionBackend implements SessionBackend {
         stdin,   // stdin to the process
         false,   // tty = false (we want raw streams, not a terminal)
         (status) => {
-          console.log(`[agent:${info.podName}] exec exited:`, status);
+          agentLog(info.podName, 'INFO', 'exec exited', status);
           rpc.connected = false;
           // Reject any pending requests
           for (const [id, pending] of rpc.pendingRequests) {
@@ -334,13 +408,13 @@ export class ContainerSessionBackend implements SessionBackend {
       // Give the agent process a moment to initialize
       await sleep(500);
 
-      console.log(`[agent:${info.podName}] RPC connection established`);
+      agentLog(info.podName, 'INFO', 'RPC connection established');
     } catch (err: unknown) {
       // k8s Exec errors are often ErrorEvent objects with the real error in Symbol(kError)
       const message = err instanceof Error
         ? err.message
         : (err as any)?.message ?? JSON.stringify(err);
-      console.error(`[agent:${info.podName}] exec failed:`, message);
+      agentLog(info.podName, 'ERROR', 'exec failed: ' + message);
       rpc.stopReading?.();
       stdin.destroy();
       stdout.destroy();
@@ -456,16 +530,8 @@ export class ContainerSessionBackend implements SessionBackend {
             env: [
               { name: 'USER_ID', value: userId },
               { name: 'SESSION_ID', value: conversationId },
-              // Pi SDK reads ANTHROPIC_API_KEY automatically
-              ...(CONFIG.anthropicApiKey
-                ? [{ name: 'ANTHROPIC_API_KEY', value: CONFIG.anthropicApiKey }]
-                : []),
-              ...(CONFIG.openaiApiKey
-                ? [{ name: 'OPENAI_API_KEY', value: CONFIG.openaiApiKey }]
-                : []),
-              ...(CONFIG.googleApiKey
-                ? [{ name: 'GOOGLE_API_KEY', value: CONFIG.googleApiKey }]
-                : []),
+              // User API keys from DB (decrypted), with server-level fallback
+              ...getUserApiKeyEnvVars(userId),
             ],
             volumeMounts: [
               { name: 'scratch', mountPath: '/tmp' },
@@ -632,7 +698,7 @@ export class ContainerSessionBackend implements SessionBackend {
     const info = this.pods.get(key);
     if (info) {
       this.deletePod(info).catch(err =>
-        console.error(`Failed to delete pod ${info.podName}: ${err}`),
+        agentLog(info.podName, 'ERROR', 'Failed to delete', err),
       );
       this.pods.delete(key);
     }
@@ -653,10 +719,10 @@ export class ContainerSessionBackend implements SessionBackend {
         namespace: this.namespace,
         gracePeriodSeconds: 5,
       });
-      console.log(`Agent pod deleted: ${info.podName}`);
+      agentLog(info.podName, 'INFO', 'Pod deleted');
     } catch (err: unknown) {
       if (!isK8sNotFound(err)) {
-        console.error(`Failed to delete pod ${info.podName}:`, err);
+        agentLog(info.podName, 'ERROR', 'Failed to delete pod', err);
       }
     }
 
@@ -667,9 +733,9 @@ export class ContainerSessionBackend implements SessionBackend {
     const now = Date.now();
     for (const [key, info] of this.pods) {
       if (now - info.lastActive > this.idleTimeoutMs) {
-        console.log(`Evicting idle agent pod: ${info.podName} (idle ${Math.round((now - info.lastActive) / 60_000)}min)`);
+        agentLog(info.podName, 'INFO', `Evicting idle pod (idle ${Math.round((now - info.lastActive) / 60_000)}min)`);
         this.deletePod(info).catch(err =>
-          console.error(`Failed to evict pod ${info.podName}: ${err}`),
+          agentLog(info.podName, 'ERROR', 'Failed to evict', err),
         );
         this.pods.delete(key);
       }
