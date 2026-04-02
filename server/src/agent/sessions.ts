@@ -14,6 +14,8 @@ import { Bridge, type BridgeEvent, type BridgeEventHandler } from './bridge.js';
 import { PodManager, type ExecStreams } from './pod-manager.js';
 import { CONFIG } from '../config.js';
 import { resolve } from 'path';
+import { getDb } from '../db.js';
+import { decrypt } from '../crypto.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -200,6 +202,40 @@ class SessionManager {
   // Internal
   // -------------------------------------------------------------------------
 
+  private static readonly PROVIDER_ENV_MAP: Record<string, string> = {
+    anthropic: 'ANTHROPIC_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    google: 'GEMINI_API_KEY',
+  };
+
+  /**
+   * Read the user's API keys from the DB and return as KEY=value args for `env`.
+   */
+  private getUserApiKeyArgs(userId: string): string[] {
+    const args: string[] = [];
+    try {
+      const db = getDb();
+      const rows = db.prepare(
+        'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?'
+      ).all(userId) as Array<{ provider: string; encrypted_key: string }>;
+
+      for (const row of rows) {
+        const envName = SessionManager.PROVIDER_ENV_MAP[row.provider];
+        if (envName) {
+          try {
+            const key = decrypt(row.encrypted_key);
+            if (key) args.push(`${envName}=${key}`);
+          } catch {
+            console.error(`Failed to decrypt ${row.provider} key for user ${userId}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to query user API keys:', err);
+    }
+    return args;
+  }
+
   private async connect(userId: string): Promise<Bridge> {
     // Clean up stale session
     const old = this.sessions.get(userId);
@@ -215,8 +251,14 @@ class SessionManager {
     // Give the pod a moment to stabilize
     await new Promise((r) => setTimeout(r, 500));
 
-    // Exec pi --mode rpc --continue inside the pod
-    const exec = await this.podManager.execInPod(userId, ['pi', '--mode', 'rpc', '--continue']);
+    // Build exec command with user's API keys injected via `env`.
+    // Keys are read fresh from the DB each time a bridge is created,
+    // so key updates take effect without restarting the pod.
+    const apiKeyEnv = this.getUserApiKeyArgs(userId);
+    const command = apiKeyEnv.length > 0
+      ? ['env', ...apiKeyEnv, 'pi', '--mode', 'rpc', '--continue']
+      : ['pi', '--mode', 'rpc', '--continue'];
+    const exec = await this.podManager.execInPod(userId, command);
 
     // Create Bridge with the exec streams
     const bridge = new Bridge({

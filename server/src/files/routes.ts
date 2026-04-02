@@ -63,22 +63,26 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    // Use ls with JSON-like output: name, size, mtime
+    // List files using stat — BusyBox find doesn't support -printf.
+    // Shell printf produces real tab characters (stat -c format doesn't on BusyBox).
     const output = await execCommand(req.user.id, [
-      'find', '/home/node', '-maxdepth', '1', '-not', '-name', '.*', '-not', '-path', '/home/node',
-      '-printf', '%f\\t%s\\t%T@\\t%y\\n'
+      'sh', '-c',
+      'find /home/node -maxdepth 1 -not -name ".*" -not -path /home/node | while read f; do '
+      + 'printf "%s\t%s\t%s\t%s\n" "$f" "$(stat -c %s "$f")" "$(stat -c %Y "$f")" "$(stat -c %F "$f")"'
+      + '; done'
     ]);
 
     const files = output
       .split('\n')
       .filter((line) => line.trim())
       .map((line) => {
-        const [name, size, mtime, type] = line.split('\t');
+        const [fullPath, size, mtime, type] = line.split('\t');
+        const name = fullPath.split('/').pop() ?? fullPath;
         return {
           name,
           size: parseInt(size, 10) || 0,
-          isDirectory: type === 'd',
-          modified: Math.floor(parseFloat(mtime) * 1000) || Date.now(),
+          isDirectory: type === 'directory',
+          modified: (parseInt(mtime, 10) || 0) * 1000 || Date.now(),
         };
       })
       .sort((a, b) => b.modified - a.modified);
