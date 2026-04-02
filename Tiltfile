@@ -29,12 +29,9 @@ stringData:
 """ % (os.getenv('ANTHROPIC_API_KEY', ''), os.getenv('OPENAI_API_KEY', ''), os.getenv('GOOGLE_API_KEY', ''))))
 
 # ── k8s Infrastructure ──
-# Namespace and RBAC must exist before the web-app deployment.
 k8s_yaml([
     'k8s/namespace.yaml',
     'k8s/rbac.yaml',
-    'k8s/network-policies.yaml',
-    'k8s/resource-quota.yaml',
 ])
 
 # ── Web App ──
@@ -43,7 +40,7 @@ docker_build(
     '.',
     dockerfile='deploy/docker/Dockerfile.web.dev',
     live_update=[
-        # Deps: full rebuild when package files change (must be first)
+        # Deps: full rebuild when package files change
         fall_back_on([
             './package.json',
             './server/package.json',
@@ -59,15 +56,8 @@ docker_build(
         # Server: sync source, tsx watch auto-restarts
         sync('./server/src', '/app/server/src'),
 
-        # Shared types (server imports via symlink, frontend via relative path)
+        # Shared types
         sync('./shared', '/app/shared'),
-
-        # Goldilocks CLI stub
-        sync('./bin', '/app/bin'),
-
-        # Skills and agent context
-        sync('./skills', '/app/skills'),
-        sync('./AGENTS.md', '/app/AGENTS.md'),
     ],
 )
 

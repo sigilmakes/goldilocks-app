@@ -35,8 +35,6 @@ spec:
               value: goldilocks
             - name: DATA_DIR
               value: /data
-            - name: WORKSPACE_ROOT
-              value: /data/workspaces
             - name: AGENT_IMAGE
               value: goldilocks-agent:latest
             - name: JWT_SECRET
@@ -98,4 +96,3 @@ spec:
     - port: 5173
       targetPort: 5173
       name: vite
-

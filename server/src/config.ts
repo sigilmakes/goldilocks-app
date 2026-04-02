@@ -9,7 +9,6 @@ export const CONFIG = {
   
   // Paths
   dataDir: process.env.DATA_DIR ?? './data',
-  workspaceRoot: process.env.WORKSPACE_ROOT ?? './data/workspaces',
   
   // Auth
   get jwtSecret(): string {
@@ -28,15 +27,11 @@ export const CONFIG = {
     return key ?? 'dev-encryption-key-32-bytes!!!';
   },
   
-  // Session management (legacy, kept for reference)
-  maxSessions: parseInt(process.env.MAX_SESSIONS ?? '20', 10),
-  sessionIdleTimeoutMs: parseInt(process.env.SESSION_IDLE_TIMEOUT_MS ?? '300000', 10),
-
   // k8s
   k8sNamespace: process.env.K8S_NAMESPACE ?? 'goldilocks',
   agentImage: process.env.AGENT_IMAGE ?? 'goldilocks-agent:latest',
   agentIdleTimeoutMs: parseInt(process.env.AGENT_IDLE_TIMEOUT_MS ?? '1800000', 10), // 30min
-  workspaceQuotaBytes: parseInt(process.env.WORKSPACE_QUOTA_BYTES ?? '1073741824', 10), // 1GB
+
   
   // API Keys
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
