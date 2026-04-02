@@ -488,12 +488,15 @@ function sleep(ms: number): Promise<void> {
 
 function isK8sNotFound(err: unknown): boolean {
   if (err && typeof err === 'object') {
-    if ('statusCode' in err && (err as { statusCode: number }).statusCode === 404) {
-      return true;
-    }
-    if ('response' in err) {
-      const resp = (err as { response: { statusCode?: number } }).response;
-      if (resp?.statusCode === 404) return true;
+    const e = err as Record<string, unknown>;
+    // @kubernetes/client-node throws errors with different shapes depending on version:
+    //   { statusCode: 404 }     — older versions
+    //   { code: 404 }           — newer versions (v1.x+)
+    //   { response: { statusCode: 404 } }
+    if (e.statusCode === 404 || e.code === 404) return true;
+    if (e.response && typeof e.response === 'object') {
+      const resp = e.response as Record<string, unknown>;
+      if (resp.statusCode === 404) return true;
     }
   }
   return false;
