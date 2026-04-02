@@ -67,6 +67,15 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
     ? tool.toolName
     : parsed?.toolName ?? 'tool';
 
+  // Extract a human-readable summary from args
+  const argsSummary = useMemo(() => {
+    if (!tool.args || typeof tool.args !== 'object') return null;
+    const a = tool.args as Record<string, unknown>;
+    if (a.file_path || a.path) return String(a.file_path ?? a.path);
+    if (a.command) return String(a.command);
+    return null;
+  }, [tool.args]);
+
   const statusColor = tool.status === 'running'
     ? 'border-amber-500/50'
     : tool.isError
@@ -85,8 +94,8 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
           <ChevronRight className="w-4 h-4 text-slate-400" />
         )}
         <span className="text-sm font-medium text-slate-200">{displayName}</span>
-        {parsed?.filePath && (
-          <span className="text-xs text-slate-400 font-mono ml-1 truncate">{parsed.filePath}</span>
+        {(argsSummary ?? parsed?.filePath) && (
+          <span className="text-xs text-slate-400 font-mono ml-1 truncate">{argsSummary ?? parsed?.filePath}</span>
         )}
         {tool.status === 'running' && (
           <Loader2 className="w-4 h-4 text-amber-500 animate-spin ml-auto" />
@@ -99,21 +108,6 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
             <div className="min-w-0">
               <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
                 {parsed.content}
-              </pre>
-            </div>
-          ) : tool.streamContent ? (
-            <div className="min-w-0">
-              <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
-                {tool.streamContent}
-              </pre>
-            </div>
-          ) : null}
-          {/* Show parsed args when available and no stream content */}
-          {!tool.streamContent && tool.args != null && typeof tool.args === 'object' && Object.keys(tool.args as Record<string, unknown>).length > 0 ? (
-            <div className="min-w-0">
-              <div className="text-xs text-slate-500 mb-1">Arguments</div>
-              <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-w-full whitespace-pre-wrap">
-                {JSON.stringify(tool.args, null, 2)}
               </pre>
             </div>
           ) : null}

@@ -99,7 +99,22 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
             content: delta.delta,
           });
         } else if (delta.type === 'toolcall_end') {
-          // Don't send another tool_start — the card already exists.
+          // Update the existing card with final parsed args and correct name
+          const tc = delta.toolCall;
+          if (tc && state.currentToolCallId) {
+            let args: unknown = {};
+            try {
+              args = tc.arguments ? JSON.parse(tc.arguments) : {};
+            } catch {
+              args = { raw: tc.arguments };
+            }
+            send(ws, {
+              type: 'tool_start',
+              toolName: tc.name ?? 'tool',
+              toolCallId: state.currentToolCallId,
+              args,
+            });
+          }
           // Keep currentToolCallId alive for tool_execution_start to map it.
         }
         break;

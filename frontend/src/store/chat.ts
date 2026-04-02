@@ -102,7 +102,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startToolCall: (toolCallId, toolName, args) => {
     set((state) => {
       const newTools = new Map(state.activeTools);
+      const existing = newTools.get(toolCallId);
       newTools.set(toolCallId, {
+        ...existing,
         toolCallId,
         toolName,
         args,
