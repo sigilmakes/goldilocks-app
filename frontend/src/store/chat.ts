@@ -7,6 +7,8 @@ export interface ToolCall {
   result?: unknown;
   isError?: boolean;
   status: 'running' | 'done';
+  /** Accumulated streaming content from toolcall_delta events. */
+  streamContent?: string;
 }
 
 export type AssistantBlock =
@@ -115,12 +117,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const newTools = new Map(state.activeTools);
       const tool = newTools.get(toolCallId);
       if (tool) {
-        // Accumulate streaming content into a special field
-        const existing = (tool as any).streamContent ?? '';
         newTools.set(toolCallId, {
           ...tool,
-          streamContent: existing + content,
-        } as any);
+          streamContent: (tool.streamContent ?? '') + content,
+        });
       }
       return { activeTools: newTools };
     });

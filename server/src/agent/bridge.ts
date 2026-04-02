@@ -276,10 +276,14 @@ export class Bridge extends EventEmitter {
       return;
     }
 
-    const dataPreview = event.type === 'response' && event.data
-      ? ` data=${JSON.stringify(event.data).slice(0, 200)}`
-      : '';
-    this.log('RECV', `type=${event.type}${event.id ? ` id=${String(event.id).slice(0, 8)}` : ''}${dataPreview}`);
+    let extra = '';
+    if (event.type === 'response' && event.data) {
+      extra = ` data=${JSON.stringify(event.data).slice(0, 200)}`;
+    } else if (event.type === 'message_update' && event.assistantMessageEvent) {
+      const ame = event.assistantMessageEvent as Record<string, unknown>;
+      extra = ` sub=${ame.type}`;
+    }
+    this.log('RECV', `type=${event.type}${event.id ? ` id=${String(event.id).slice(0, 8)}` : ''}${extra}`);
 
     // RPC response — resolve pending promise
     if (event.type === 'response' && event.id && this.pending.has(event.id as string)) {
