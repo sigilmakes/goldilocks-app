@@ -1,200 +1,92 @@
 # Goldilocks
 
-AI-powered web application for generating Quantum ESPRESSO input files with ML-predicted k-point grids. Getting your DFT parameters *just right*.
+AI-assisted DFT calculation assistant for materials science research.
 
-Goldilocks pairs an AI chat assistant with domain-specific ML models to help computational materials scientists set up DFT calculations. Upload a crystal structure, get an optimal k-point grid predicted by ALIGNN or Random Forest models, and generate a ready-to-run Quantum ESPRESSO input file — all through a conversational interface or deterministic quick-generate mode.
+## Architecture
 
-## Features
+```
+React Frontend ──WebSocket──▶ Express Server ──Bridge──▶ pi (in k8s pod)
+                              │                          │
+                              │ SQLite (metadata)        │ PVC (user home dir)
+                              │ Auth, conversations      │ Sessions, files, config
+```
 
-- **ML k-point prediction** — ALIGNN (graph neural network) and Random Forest models trained on thousands of DFT convergence tests. Returns median predictions with confidence intervals.
-- **QE input generation** — Complete SCF input files with SSSP pseudopotentials, appropriate smearing, and cutoffs looked up per element.
-- **AI chat assistant** — Conversational agent powered by Claude, GPT, or Gemini that can reason about your structures, explain parameters, and call domain tools.
-- **3D structure visualization** — Interactive crystal structure viewer (3Dmol.js) with ball-and-stick, spacefill, wireframe, and stick rendering modes.
-- **Structure database search** — Query JARVIS, Materials Project, MC3D, and OQMD databases directly from the app.
-- **Structure library** — Save and organize frequently used crystal structures.
-- **Quick generate mode** — Deterministic pipeline (no agent needed): pick parameters in the sidebar, click generate.
-- **Multi-provider LLM support** — Bring your own API keys for Anthropic, OpenAI, or Google, or use server-provided keys.
-- **Per-user workspaces** — Each conversation gets an isolated file workspace for uploads and generated files.
-- **Dark/light theme** — Persistent theme preference with amber accent throughout.
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 19, Vite 6, Tailwind CSS 4, Zustand 5, React Router 7 |
-| Backend | Express 5, TypeScript, better-sqlite3, WebSocket (ws) |
-| Agent | [Pi SDK](https://github.com/mariozechner/pi-coding-agent) (`@mariozechner/pi-coding-agent`) |
-| Auth | JWT (jsonwebtoken), bcrypt, AES-256-GCM encrypted API key storage |
-| Orchestration | Kubernetes (`@kubernetes/client-node`), kind + Tilt for local dev |
-| Visualization | 3Dmol.js, Mermaid |
-| Build | npm workspaces, multi-stage Docker |
+- **One pod per user**, long-lived, with a 5GB PVC as the home directory
+- **Bridge pattern**: JSONL over stdin/stdout via `pi --mode rpc --continue`
+- **Pi owns agent state**: sessions, conversations, tools, model selection
+- **Web app is a thin wrapper**: auth, conversation metadata, file proxy, WebSocket fan-out
+- **k8s for dev and prod**: `kind` locally, real cluster for production. Same code path.
 
 ## Quick Start
 
-### Prerequisites
-
-- Node.js ≥ 20
-- npm ≥ 10
-- Docker, [kind](https://kind.sigs.k8s.io/), kubectl, [Tilt](https://docs.tilt.dev/install.html)
-- At least one LLM API key (Anthropic, OpenAI, or Google) for chat features
-
-### Development
-
 ```bash
-# Clone and install
-git clone <repo-url> goldilocks-app
-cd goldilocks-app
-npm install
+# Prerequisites: Docker, kind, tilt, node 22+
 
-# One-time: create kind cluster
-bash deploy/setup-dev.sh
+# 1. Create kind cluster
+npm run dev:setup
 
-# Start everything — web app, agents, infrastructure, all in k8s
+# 2. Start Tilt (builds images, deploys, watches for changes)
 tilt up
+
+# 3. Open browser
+#    Frontend: http://localhost:5173
+#    API:      http://localhost:3000
+
+# Reset everything:
+npm run dev:reset
 ```
-
-That's it. Tilt builds images, applies manifests, syncs file changes, and
-port-forwards automatically.
-
-- Frontend: http://localhost:5173 (Vite dev server with HMR)
-- Backend: http://localhost:3000 (Express with tsx watch)
-- Tilt dashboard: http://localhost:10350
-
-Edit a React component → Tilt syncs the file → Vite HMR in the browser.
-Edit an Express route → Tilt syncs → tsx restarts the server.
-No image rebuilds for source changes. Sub-second for frontend, ~2s for backend.
-
-### Teardown
-
-```bash
-tilt down          # Stop services, remove k8s resources
-kind delete cluster --name goldilocks   # Delete the cluster entirely
-```
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PORT` | No | `3000` | Server port |
-| `NODE_ENV` | No | `development` | `development`, `production`, or `test` |
-| `DATA_DIR` | No | `./data` | SQLite database and data directory |
-| `WORKSPACE_ROOT` | No | `./data/workspaces` | Per-user workspace file storage |
-| `JWT_SECRET` | **Yes** (prod) | `dev-secret...` | JWT signing secret. Use a long random string. |
-| `ENCRYPTION_KEY` | **Yes** (prod) | `dev-encryption...` | AES-256 key for encrypting stored API keys. |
-| `ANTHROPIC_API_KEY` | No | — | Server-wide Anthropic API key (available to all users) |
-| `OPENAI_API_KEY` | No | — | Server-wide OpenAI API key |
-| `GOOGLE_API_KEY` | No | — | Server-wide Google API key |
-| `K8S_NAMESPACE` | No | `goldilocks` | k8s namespace for agent pods |
-| `AGENT_IMAGE` | No | `goldilocks-agent:latest` | Agent container image |
-| `AGENT_IDLE_TIMEOUT_MS` | No | `1800000` | Agent pod idle timeout (30min) |
-| `WORKSPACE_QUOTA_BYTES` | No | `1073741824` | Per-user workspace size (1GB) |
 
 ## Project Structure
 
 ```
-goldilocks-app/
-├── frontend/                    # React + Vite frontend
-│   ├── src/
-│   │   ├── api/client.ts        # Typed HTTP client (wraps fetch + auth)
-│   │   ├── components/
-│   │   │   ├── auth/            # LoginForm
-│   │   │   ├── layout/          # Header, Sidebar, ChatPanel, ContextPanel
-│   │   │   ├── science/         # KPointsResultCard, InputFileCard, StructureViewer,
-│   │   │   │                    #   PredictionSummary, SearchDialog, StructureLibrary
-│   │   │   └── ui/              # ConnectionBanner, MermaidDiagram, Skeleton, Toast
-│   │   ├── hooks/
-│   │   │   ├── useAgent.ts      # WebSocket connection + message dispatch
-│   │   │   └── useConnectionStatus.ts  # Health check with auto-reconnect
-│   │   ├── pages/               # Login, Workspace, Settings, Docs
-│   │   ├── store/               # Zustand stores (auth, chat, conversations,
-│   │   │                        #   context, files, models, settings, toast)
-│   │   ├── App.tsx              # Routes + ProtectedRoute wrapper
-│   │   └── main.tsx             # Entry point + theme initialization
-│   ├── vite.config.ts
-│   └── package.json
-│
-├── server/                      # Express + TypeScript backend
-│   ├── src/
-│   │   ├── agent/
-│   │   │   ├── session-backend.ts    # SessionBackend interface
-│   │   │   ├── container-backend.ts  # k8s pod per session (via @kubernetes/client-node)
-│   │   │   ├── k8s-client.ts        # Shared KubeConfig/CoreV1Api singleton
-│   │   │   ├── sessions.ts          # Session cache (wraps k8s backend)
-│   │   │   ├── websocket.ts         # WebSocket server + event mapping
-│   │   │   └── workspace-guard.ts   # Path traversal prevention
-│   │   ├── auth/routes.ts           # Register, login, refresh, me
-│   │   ├── conversations/routes.ts  # CRUD for conversations
-│   │   ├── files/routes.ts          # File upload, download, list, delete
-│   │   ├── models/routes.ts         # Available LLM models
-│   │   ├── settings/routes.ts       # User settings + encrypted API keys
-│   │   ├── structures/routes.ts     # Structure search/fetch + library
-│   │   ├── quickgen/routes.ts       # Deterministic predict + generate
-│   │   ├── config.ts               # Environment config
-│   │   ├── db.ts                    # SQLite connection + migration runner
-│   │   └── index.ts                 # Express app setup + server start
-│   └── package.json
-│
-├── k8s/                         # Kubernetes manifests
-│   ├── namespace.yaml
-│   ├── rbac.yaml
-│   ├── network-policies.yaml
-│   ├── resource-quota.yaml
-│   ├── web-app.yaml             # Web app deployment + service
-│   ├── mcp-server.yaml
-│   └── ingress.yaml
-│
-├── deploy/                      # Deployment tooling
-│   ├── docker/
-│   │   ├── Dockerfile.web       # Production multi-stage build
-│   │   ├── Dockerfile.web.dev   # Dev mode: tsx watch + vite dev
-│   │   ├── Dockerfile.agent     # Agent container (Pi SDK)
-│   │   └── Dockerfile.mcp      # MCP server (ML inference)
-│   ├── kind-config.yaml         # kind cluster config (no port mappings)
-│   ├── setup-dev.sh             # One-time cluster setup
-│   └── README.md                # Deployment guide
-│
-├── Tiltfile                     # Dev orchestration — builds, syncs, port-forwards
-├── skills/goldilocks/SKILL.md   # Pi agent skill (DFT domain knowledge)
-├── test/smoke-test.sh           # End-to-end smoke test
-├── Dockerfile                   # Multi-stage production Docker build
-├── AGENTS.md                    # Agent context for Pi SDK sessions
-└── package.json                 # npm workspace root
+server/src/
+  agent/
+    bridge.ts          # JSONL RPC communication with pi
+    pod-manager.ts     # k8s pod/PVC lifecycle management
+    sessions.ts        # Maps users to Bridge instances
+    websocket.ts       # WebSocket handler (frontend ↔ Bridge)
+    k8s-client.ts      # Shared k8s API client
+  auth/                # JWT auth, bcrypt passwords
+  conversations/       # Conversation metadata CRUD
+  files/               # File operations via k8s exec
+  models/              # Model selection via pi RPC
+  settings/            # User settings + API key management
+  config.ts            # Environment configuration
+  crypto.ts            # AES-256-GCM encryption for API keys
+  db.ts                # SQLite with migrations
+
+frontend/src/
+  hooks/useAgent.ts    # WebSocket connection management
+  store/               # Zustand stores (chat, conversations, files, models, etc.)
+  components/
+    layout/            # Sidebar, ChatPanel, ContextPanel, Header
+    chat/              # MessageBubble, ToolCallCard, MarkdownContent
+    science/           # StructureViewer (3Dmol.js), PredictionSummary
+  pages/               # Login, Workspace, Settings
+
+k8s/                   # Kubernetes manifests (namespace, RBAC, web-app)
+deploy/docker/         # Dockerfiles (agent, web dev)
+shared/types.ts        # WebSocket protocol types
 ```
 
-## Architecture Overview
+## Key Decisions
 
-Goldilocks follows a three-panel workspace layout: **Sidebar** (conversations + structure library), **Chat** (agent interaction), and **Context** (structure viewer, parameters, files).
+- **k8s-only**: No local-mode backend. `kind` for dev, real cluster for prod.
+- **Pod per user, not per session**: One long-lived pod, pi switches sessions internally.
+- **PVC as home dir**: `/home/node` is a persistent volume. Pi's sessions, config, and user files survive pod restarts.
+- **Bridge pattern**: The only code that talks to pi. JSONL parsing, RPC correlation, event dispatch, structured logging.
+- **API keys in DB**: Encrypted with AES-256-GCM, decrypted at pod creation and passed as env vars.
+- **Messages from pi**: Chat history lives in pi's session files, not in SQLite. DB stores conversation metadata only.
 
-The backend serves both the API and the built frontend. Agent sessions are managed via WebSocket — the client authenticates, opens a conversation, and sends prompts. The server creates agent pods in Kubernetes, each running a Pi SDK session scoped to the conversation's workspace.
+## Environment Variables
 
-**Kubernetes is the only way to run agent sessions.** Local dev uses `kind` (Kubernetes IN Docker) with Tilt for live-reload. Production uses a real cluster. The `ContainerSessionBackend` uses `@kubernetes/client-node` to create/delete/watch pods.
-
-## Deployment
-
-See [deploy/README.md](deploy/README.md) for:
-- Local development with kind + Tilt
-- Production Kubernetes deployment
-- Container image builds
-- Secret management
-
-## Contributing
-
-### Running Tests
-
-```bash
-# Build first (smoke test needs compiled server)
-npm run build
-
-# Run the smoke test
-bash test/smoke-test.sh
-
-# Type checking
-npm run typecheck
-
-# Linting
-npm run lint
-```
-
-## License
-
-MIT
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | Server port |
+| `DATA_DIR` | `./data` | Data directory (SQLite, logs) |
+| `K8S_NAMESPACE` | `goldilocks` | Kubernetes namespace |
+| `AGENT_IMAGE` | `goldilocks-agent:latest` | Agent container image |
+| `JWT_SECRET` | dev default | JWT signing secret |
+| `ENCRYPTION_KEY` | dev default | API key encryption key |
+| `ANTHROPIC_API_KEY` | — | Server-level Anthropic key (fallback) |
+| `AGENT_IDLE_TIMEOUT_MS` | `1800000` (30min) | Pod idle timeout |
