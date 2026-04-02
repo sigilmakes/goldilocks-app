@@ -227,9 +227,13 @@ export function setupWebSocket(wss: WebSocketServer): void {
               // Fetch message history from pi
               let messages: HistoryMessage[] = [];
               try {
-                const history = await sessionManager.getMessages(state.user.id) as unknown[];
-                if (Array.isArray(history)) {
-                  messages = history
+                const history = await sessionManager.getMessages(state.user.id);
+                console.log('get_messages raw:', JSON.stringify(history).slice(0, 500));
+                // Pi may return { messages: [...] } or bare array
+                const msgList = Array.isArray(history) ? history
+                  : (history as Record<string, unknown>)?.messages;
+                if (Array.isArray(msgList)) {
+                  messages = msgList
                     .filter((m: any) => m.role === 'user' || m.role === 'assistant')
                     .map((m: any) => {
                       const text = typeof m.content === 'string'
