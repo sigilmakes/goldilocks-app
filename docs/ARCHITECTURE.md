@@ -1,5 +1,14 @@
 # Architecture
 
+Detailed documentation in sub-pages:
+
+- **[Backend](architecture/backend.md)** — Server modules, Bridge, Pod Manager, REST API
+- **[Frontend](architecture/frontend.md)** — React components, Zustand stores, connection hook
+- **[Data Flow](architecture/data-flow.md)** — Prompt flow, model selection, file upload, conversation lifecycle
+- **[Deployment](architecture/deployment.md)** — Kind + Tilt setup, k8s resources, production notes
+- **[Security](architecture/security.md)** — Auth, API key encryption, container isolation, network
+- **[WebSocket Sessions](architecture/websocket-sessions.md)** — Connection model, idle timeout, failure handling, multi-tab
+
 ## Overview
 
 Goldilocks is a web application that wraps the [Pi coding agent](https://github.com/mariozechner/pi-coding-agent) with a multi-user UI for DFT calculation assistance. The web app is a thin layer — Pi owns all agent logic, sessions, tools, and model selection.
