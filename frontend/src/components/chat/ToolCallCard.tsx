@@ -1,19 +1,71 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import type { ToolCall } from '../../store/chat';
 
-interface ToolCallWithStream extends ToolCall {
-  streamContent?: string;
+/**
+ * Try to extract readable content from streaming JSON tool arguments.
+ * For write/edit tools, the args are {"file_path":"...","content":"..."}.
+ * We extract the content value and unescape it for display.
+ */
+function extractStreamContent(raw: string): { toolName: string; filePath: string; content: string } | null {
+  // Try to find file_path
+  const pathMatch = raw.match(/"file_path"\s*:\s*"([^"]*)"/)
+    ?? raw.match(/"path"\s*:\s*"([^"]*)"/)
+    ?? raw.match(/"command"\s*:\s*"([^"]*)"/); // bash tool
+  const filePath = pathMatch?.[1] ?? '';
+
+  // Try to find content field and extract everything after it
+  const contentMatch = raw.match(/"content"\s*:\s*"/);
+  if (contentMatch && contentMatch.index !== undefined) {
+    const start = contentMatch.index + contentMatch[0].length;
+    let content = raw.slice(start);
+    // Remove trailing incomplete JSON (closing quote, brace)
+    if (content.endsWith('"}')) content = content.slice(0, -2);
+    else if (content.endsWith('"')) content = content.slice(0, -1);
+    // Unescape JSON string escapes
+    try {
+      content = JSON.parse('"' + content + '"');
+    } catch {
+      // Partial JSON — do basic unescaping
+      content = content.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    }
+    return { toolName: 'write', filePath, content };
+  }
+
+  // For bash tool: extract command
+  const cmdMatch = raw.match(/"command"\s*:\s*"/);
+  if (cmdMatch && cmdMatch.index !== undefined) {
+    const start = cmdMatch.index + cmdMatch[0].length;
+    let content = raw.slice(start);
+    if (content.endsWith('"}')) content = content.slice(0, -2);
+    else if (content.endsWith('"')) content = content.slice(0, -1);
+    try {
+      content = JSON.parse('"' + content + '"');
+    } catch {
+      content = content.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    }
+    return { toolName: 'bash', filePath: '', content };
+  }
+
+  return null;
 }
 
-export default function ToolCallCard({ tool }: { tool: ToolCallWithStream }) {
-  // Auto-expand while running so user sees live content
+export default function ToolCallCard({ tool }: { tool: ToolCall }) {
   const [expanded, setExpanded] = useState(tool.status === 'running');
 
-  // Auto-expand when tool starts running
   useEffect(() => {
     if (tool.status === 'running') setExpanded(true);
   }, [tool.status]);
+
+  // Parse streaming content for nicer display
+  const parsed = useMemo(() => {
+    if (!tool.streamContent) return null;
+    return extractStreamContent(tool.streamContent);
+  }, [tool.streamContent]);
+
+  const displayName = tool.toolName !== 'unknown'
+    ? tool.toolName
+    : parsed?.toolName ?? 'tool';
 
   const statusColor = tool.status === 'running'
     ? 'border-amber-500/50'
@@ -32,7 +84,10 @@ export default function ToolCallCard({ tool }: { tool: ToolCallWithStream }) {
         ) : (
           <ChevronRight className="w-4 h-4 text-slate-400" />
         )}
-        <span className="text-sm font-medium text-slate-200">{tool.toolName}</span>
+        <span className="text-sm font-medium text-slate-200">{displayName}</span>
+        {parsed?.filePath && (
+          <span className="text-xs text-slate-400 font-mono ml-1 truncate">{parsed.filePath}</span>
+        )}
         {tool.status === 'running' && (
           <Loader2 className="w-4 h-4 text-amber-500 animate-spin ml-auto" />
         )}
@@ -40,7 +95,13 @@ export default function ToolCallCard({ tool }: { tool: ToolCallWithStream }) {
       {expanded && (
         <div className="px-3 py-2 space-y-2 bg-slate-800/50 overflow-hidden">
           {/* Show streaming content while tool args are being generated */}
-          {tool.streamContent ? (
+          {parsed?.content ? (
+            <div className="min-w-0">
+              <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
+                {parsed.content}
+              </pre>
+            </div>
+          ) : tool.streamContent ? (
             <div className="min-w-0">
               <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
                 {tool.streamContent}
