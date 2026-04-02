@@ -19,13 +19,11 @@ router.get('/', verifyToken, async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const result = await sessionManager.getAvailableModels(req.user.id);
-    console.log('get_available_models result:', JSON.stringify(result).slice(0, 500));
+    const result = await sessionManager.getAvailableModels(req.user.id) as Record<string, unknown> | unknown[];
     
-    // Pi may return { models: [...] } or just [...]
-    const raw = result as Record<string, unknown>;
+    // Pi returns { models: [...] }
     const models = Array.isArray(result) ? result
-      : Array.isArray(raw?.models) ? raw.models
+      : Array.isArray((result as Record<string, unknown>)?.models) ? (result as Record<string, unknown>).models as unknown[]
       : [];
     const providers = [...new Set((models as Array<Record<string, unknown>>).map((m) => m.provider as string))];
 
