@@ -35,6 +35,8 @@ interface ClientState {
   isProcessing: boolean;
   /** Track whether text deltas were received for the current message. */
   receivedTextDelta: boolean;
+  /** Track the current streaming tool call ID. */
+  currentToolCallId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,48 +81,43 @@ function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): 
         } else if (delta.type === 'thinking_delta' && delta.delta) {
           send(ws, { type: 'thinking_delta', delta: delta.delta });
         } else if (delta.type === 'toolcall_start') {
-          // Tool call arguments are starting to stream
           const tc = delta.partial ?? delta.toolCall;
-          if (tc) {
-            send(ws, {
-              type: 'tool_start',
-              toolName: tc.name ?? 'unknown',
-              toolCallId: tc.id ?? `tc_${Date.now()}`,
-              args: {},
-            });
-          }
-        } else if (delta.type === 'toolcall_delta' && delta.delta) {
-          // Streaming tool call arguments (e.g. file content being written)
-          const tc = delta.partial;
-          if (tc?.id) {
-            send(ws, {
-              type: 'tool_update',
-              toolCallId: tc.id,
-              content: delta.delta,
-            });
-          }
+          const toolCallId = tc?.id ?? `tc_${Date.now()}`;
+          state.currentToolCallId = toolCallId;
+          send(ws, {
+            type: 'tool_start',
+            toolName: tc?.name ?? 'unknown',
+            toolCallId,
+            args: {},
+          });
+        } else if (delta.type === 'toolcall_delta' && delta.delta && state.currentToolCallId) {
+          send(ws, {
+            type: 'tool_update',
+            toolCallId: state.currentToolCallId,
+            content: delta.delta,
+          });
         } else if (delta.type === 'toolcall_end') {
-          // Tool call arguments finished — send final args
           const tc = delta.toolCall;
+          const toolCallId = tc?.id ?? state.currentToolCallId ?? `tc_${Date.now()}`;
           if (tc) {
             try {
               const args = tc.arguments ? JSON.parse(tc.arguments) : {};
-              // Re-send tool_start with full args so the card updates
               send(ws, {
                 type: 'tool_start',
                 toolName: tc.name ?? 'unknown',
-                toolCallId: tc.id ?? `tc_${Date.now()}`,
+                toolCallId,
                 args,
               });
             } catch {
               send(ws, {
                 type: 'tool_start',
                 toolName: tc.name ?? 'unknown',
-                toolCallId: tc.id ?? `tc_${Date.now()}`,
+                toolCallId,
                 args: { raw: tc.arguments },
               });
             }
           }
+          state.currentToolCallId = null;
         }
         break;
       }
@@ -198,6 +195,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
       unsubscribe: null,
       isProcessing: false,
       receivedTextDelta: false,
+      currentToolCallId: null,
     };
 
     const cleanup = () => {
