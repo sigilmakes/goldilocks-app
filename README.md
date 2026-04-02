@@ -1,97 +1,46 @@
 # Goldilocks
 
-AI-assisted DFT calculation assistant for materials science research.
+AI-powered web application for generating Quantum ESPRESSO input files with ML-predicted k-point grids. Getting your DFT parameters *just right*.
 
-## Architecture
+Goldilocks pairs an AI chat assistant with domain-specific tools to help computational materials scientists set up DFT calculations. Upload a crystal structure, ask about k-point convergence, generate ready-to-run Quantum ESPRESSO input files — all through a conversational interface backed by Claude, GPT, or Gemini.
 
-```
-React Frontend ──WebSocket──▶ Express Server ──Bridge──▶ pi (in k8s pod)
-                              │                          │
-                              │ SQLite (metadata)        │ PVC (user home dir)
-                              │ Auth, conversations      │ Sessions, files, config
-```
+## Features
 
-- **One pod per user**, long-lived, with a 5GB PVC as the home directory
-- **Bridge pattern**: JSONL over stdin/stdout via `pi --mode rpc --continue`
-- **Pi owns agent state**: sessions, conversations, tools, model selection
-- **Web app is a thin wrapper**: auth, conversation metadata, file proxy, WebSocket fan-out
-- **k8s for dev and prod**: `kind` locally, real cluster for production. Same code path.
+- **AI chat assistant** — Conversational agent powered by the [Pi coding agent](https://github.com/mariozechner/pi-coding-agent). Reasons about your structures, explains parameters, writes and runs code, calls domain tools.
+- **Live tool streaming** — Watch the agent work in real-time: file writes stream character by character, bash output appears as it runs.
+- **ML k-point prediction** — ALIGNN and Random Forest models for predicting optimal k-point grids with confidence intervals.
+- **QE input generation** — Complete SCF input files with SSSP pseudopotentials, appropriate smearing, and per-element cutoffs.
+- **3D structure viewer** — Interactive crystal structure visualisation (3Dmol.js) with multiple rendering modes.
+- **Multi-provider LLM support** — Bring your own API keys for Anthropic, OpenAI, or Google. Switch models mid-conversation.
+- **Per-user isolation** — Each user gets their own k8s pod with a persistent home directory.
 
 ## Quick Start
 
+Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), [Tilt](https://docs.tilt.dev/install.html), Node.js 22+, and at least one LLM API key.
+
 ```bash
-# Prerequisites: Docker, kind, tilt, node 22+
-
-# 1. Create kind cluster
-npm run dev:setup
-
-# 2. Start Tilt (builds images, deploys, watches for changes)
-tilt up
-
-# 3. Open browser
-#    Frontend: http://localhost:5173
-#    API:      http://localhost:3000
-
-# Reset everything:
-npm run dev:reset
+npm install
+npm run dev:setup    # create kind cluster
+tilt up              # build, deploy, watch
 ```
 
-## Project Structure
+- **Frontend**: http://localhost:5173
+- **API**: http://localhost:3000
 
+Register an account, add your API key in Settings, and start chatting.
+
+```bash
+tilt down            # stop
+npm run dev:reset    # delete cluster
 ```
-server/src/
-  agent/
-    bridge.ts          # JSONL RPC communication with pi
-    pod-manager.ts     # k8s pod/PVC lifecycle management
-    sessions.ts        # Maps users to Bridge instances
-    websocket.ts       # WebSocket handler (frontend ↔ Bridge)
-    k8s-client.ts      # Shared k8s API client
-  auth/                # JWT auth, bcrypt passwords
-  conversations/       # Conversation metadata CRUD
-  files/               # File operations via k8s exec
-  models/              # Model selection via pi RPC
-  settings/            # User settings + API key management
-  config.ts            # Environment configuration
-  crypto.ts            # AES-256-GCM encryption for API keys
-  db.ts                # SQLite with migrations
-
-frontend/src/
-  hooks/useAgent.ts    # WebSocket connection management
-  store/               # Zustand stores (chat, conversations, files, models, etc.)
-  components/
-    layout/            # Sidebar, ChatPanel, ContextPanel, Header
-    chat/              # MessageBubble, ToolCallCard, MarkdownContent
-    science/           # StructureViewer (3Dmol.js), PredictionSummary
-  pages/               # Login, Workspace, Settings
-
-k8s/                   # Kubernetes manifests (namespace, RBAC, web-app)
-deploy/docker/         # Dockerfiles (agent, web dev)
-shared/types.ts        # WebSocket protocol types
-```
-
-## Key Decisions
-
-- **k8s-only**: No local-mode backend. `kind` for dev, real cluster for prod.
-- **Pod per user, not per session**: One long-lived pod, pi switches sessions internally.
-- **PVC as home dir**: `/home/node` is a persistent volume. Pi's sessions, config, and user files survive pod restarts.
-- **Bridge pattern**: The only code that talks to pi. JSONL parsing, RPC correlation, event dispatch, structured logging.
-- **API keys in DB**: Encrypted with AES-256-GCM, decrypted at pod creation and passed as env vars.
-- **Messages from pi**: Chat history lives in pi's session files, not in SQLite. DB stores conversation metadata only.
 
 ## Documentation
 
-- **[Architecture](docs/ARCHITECTURE.md)** — Layer diagram, data ownership, event flows, security
-- **[Development Guide](docs/DEVELOPMENT.md)** — Setup, workflow, debugging, project structure
-- **[WebSocket Protocol](docs/WEBSOCKET-PROTOCOL.md)** — Client/server messages, state machine, multi-tab
+- **[Architecture](docs/ARCHITECTURE.md)** — System overview, layers, data ownership
+  - [Backend](docs/architecture/backend.md), [Frontend](docs/architecture/frontend.md), [Data Flow](docs/architecture/data-flow.md), [Deployment](docs/architecture/deployment.md), [Security](docs/architecture/security.md), [WebSocket Sessions](docs/architecture/websocket-sessions.md)
+- **[Development Guide](docs/DEVELOPMENT.md)** — Workflow, debugging, project structure
+- **[WebSocket Protocol](docs/WEBSOCKET-PROTOCOL.md)** — Client/server messages, state machine
 
-## Environment Variables
+## License
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | Server port |
-| `DATA_DIR` | `./data` | Data directory (SQLite, logs) |
-| `K8S_NAMESPACE` | `goldilocks` | Kubernetes namespace |
-| `AGENT_IMAGE` | `goldilocks-agent:latest` | Agent container image |
-| `JWT_SECRET` | dev default | JWT signing secret |
-| `ENCRYPTION_KEY` | dev default | API key encryption key |
-| `AGENT_IDLE_TIMEOUT_MS` | `1800000` (30min) | Pod idle timeout |
+MIT
