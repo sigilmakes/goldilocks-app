@@ -12,10 +12,10 @@ interface FilesState {
   files: WorkspaceFile[];
   isLoading: boolean;
   error: string | null;
-  
-  fetch: (conversationId: string) => Promise<void>;
-  upload: (conversationId: string, file: File) => Promise<void>;
-  remove: (conversationId: string, filename: string) => Promise<void>;
+
+  fetch: () => Promise<void>;
+  upload: (file: File) => Promise<void>;
+  remove: (filename: string) => Promise<void>;
   clear: () => void;
 }
 
@@ -23,23 +23,15 @@ interface FilesResponse {
   files: WorkspaceFile[];
 }
 
-interface UploadResponse {
-  file: {
-    name: string;
-    path: string;
-    size: number;
-  };
-}
-
 export const useFilesStore = create<FilesState>((set, get) => ({
   files: [],
   isLoading: false,
   error: null,
 
-  fetch: async (conversationId: string) => {
+  fetch: async () => {
     set({ isLoading: true, error: null });
     try {
-      const res = await api.get<FilesResponse>(`/conversations/${conversationId}/files`);
+      const res = await api.get<FilesResponse>('/files');
       set({ files: res.files, isLoading: false });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to fetch files';
@@ -47,15 +39,13 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     }
   },
 
-  upload: async (conversationId: string, file: File) => {
+  upload: async (file: File) => {
     set({ isLoading: true, error: null });
     try {
-      // Read file as base64
       const content = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
           const result = reader.result as string;
-          // Remove data URL prefix
           const base64 = result.split(',')[1];
           resolve(base64);
         };
@@ -63,13 +53,8 @@ export const useFilesStore = create<FilesState>((set, get) => ({
         reader.readAsDataURL(file);
       });
 
-      await api.post<UploadResponse>(`/conversations/${conversationId}/upload`, {
-        filename: file.name,
-        content,
-      });
-
-      // Refresh file list
-      await get().fetch(conversationId);
+      await api.post('/files/upload', { filename: file.name, content });
+      await get().fetch();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to upload file';
       set({ error: message, isLoading: false });
@@ -77,9 +62,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     }
   },
 
-  remove: async (conversationId: string, filename: string) => {
+  remove: async (filename: string) => {
     try {
-      await api.delete(`/conversations/${conversationId}/files/${filename}`);
+      await api.delete(`/files/${filename}`);
       set((state) => ({
         files: state.files.filter((f) => f.name !== filename),
       }));

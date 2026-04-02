@@ -1,5 +1,6 @@
 node_modules
 .git
+data
 server/dist
 server/data
 frontend/dist
@@ -7,3 +8,4 @@ scratchpad
 *.db
 *.db-wal
 *.db-shm
+*.db-journal

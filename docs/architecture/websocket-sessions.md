@@ -1,194 +1,105 @@
-# WebSocket & Session Management
+# WebSocket Sessions
 
-The WebSocket layer connects the frontend chat to the Pi SDK agent sessions.
-This document covers the protocol state machine, event mapping, and session
-backend.
+## Connection Model
 
-## WebSocket State Machine
-
-Each WebSocket connection tracks a `ClientState` object with authentication,
-conversation binding, and processing status:
-
-```mermaid
-stateDiagram-v2
-    [*] --> CONNECTED: WebSocket connect
-
-    CONNECTED --> AUTHENTICATED: auth message<br/>jwt.verify() succeeds
-    CONNECTED --> CLOSED: auth_fail
-
-    AUTHENTICATED --> READY: open message<br/>sessionCache.getOrCreate()
-    AUTHENTICATED --> AUTHENTICATED: open fails (error sent)
-
-    READY --> PROCESSING: prompt message<br/>session.prompt()
-    READY --> READY: open (switch conversation,<br/>cleans up previous)
-
-    PROCESSING --> READY: agent_end
-    PROCESSING --> READY: abort → session.abort()
-    PROCESSING --> READY: error
-
-    READY --> CLOSED: socket close
-    PROCESSING --> CLOSED: socket close
-    CLOSED --> [*]
-```
-
-### Server-Side State
-
-```ts
-// server/src/agent/websocket.ts
-interface ClientState {
-  user: AuthUser | null;           // Set after auth
-  conversationId: string | null;   // Set after open
-  session: AgentSession | null;    // Pi SDK session (proxy to k8s pod)
-  unsubscribe: (() => void) | null; // Event subscription cleanup
-  isProcessing: boolean;           // Prevents concurrent prompts
-}
-```
-
-## Pi SDK Event Mapping
-
-The `mapAgentEvent()` function in `websocket.ts` translates Pi SDK event types
-to the `ServerMessage` union (defined in `shared/types.ts`):
-
-```mermaid
-graph LR
-    subgraph "Pi SDK Events"
-        MU_text["message_update<br/>(text_delta)"]
-        MU_think["message_update<br/>(thinking_delta)"]
-        TES["tool_execution_start"]
-        TEU["tool_execution_update"]
-        TEE["tool_execution_end"]
-        ME["message_end"]
-        AE["agent_end"]
-    end
-
-    subgraph "WebSocket Messages"
-        TD["text_delta"]
-        ThD["thinking_delta"]
-        TS["tool_start"]
-        TU["tool_update"]
-        TE2["tool_end"]
-        ME2["message_end"]
-        AE2["agent_end"]
-    end
-
-    MU_text --> TD
-    MU_think --> ThD
-    TES --> TS
-    TEU --> TU
-    TEE --> TE2
-    ME --> ME2
-    AE --> AE2
-```
-
-The `tool_update` message carries streaming output from tools (e.g., partial
-bash stdout). Currently the frontend's `updateToolCall` store action is a no-op
-placeholder, but the infrastructure is in place.
-
-## Session Backend Interface
+One WebSocket connection per browser tab. Multiple tabs for the same user share the same Bridge on the server — events fan out to all connected clients.
 
 ```mermaid
 graph TD
-    WSHandler["websocket.ts"]
-    Cache["sessionCache<br/><small>sessions.ts</small>"]
-    Backend["SessionBackend<br/><small>interface</small>"]
-    Container["ContainerSessionBackend<br/><small>container-backend.ts</small>"]
-    K8sClient["k8s-client.ts<br/><small>KubeConfig + CoreV1Api</small>"]
-
-    WSHandler -->|"getOrCreate()"| Cache
-    Cache --> Backend
-    Backend --> Container
-    Container --> K8sClient
+    Tab1["Browser Tab 1"] -->|"WebSocket"| WS["WebSocket Handler"]
+    Tab2["Browser Tab 2"] -->|"WebSocket"| WS
+    WS -->|"subscribe()"| Bridge["Bridge (per user)"]
+    Bridge -->|"stdin/stdout"| Pi["pi --mode rpc"]
 ```
 
-### Interface — `session-backend.ts`
+## Session Lifecycle
 
-```ts
-interface SessionBackend {
-  getOrCreate(userId: string, conversationId: string): Promise<SessionHandle>;
-  touch(userId: string, conversationId: string): void;
-  dispose(userId: string, conversationId: string): void;
-  shutdown(): void;
-}
-
-interface SessionHandle {
-  session: AgentSession;     // Pi SDK session object (proxy to k8s pod)
-  workspacePath: string;     // /work (inside the pod)
-  sessionPath: string;       // /tmp/pi-session (inside the pod)
-}
-```
-
-### `sessionCache` Wrapper — `sessions.ts`
-
-The `sessionCache` in `sessions.ts` wraps the `ContainerSessionBackend`
-and provides a simplified API that returns `AgentSession` directly (the
-WebSocket layer only needs the session object):
-
-```ts
-const sessionCache = {
-  getOrCreate(userId, convId): Promise<AgentSession>,  // Unwraps SessionHandle
-  touch(userId, convId): void,
-  dispose(userId, convId): void,
-  shutdown(): void,
-  get backend(): SessionBackend,  // For code that needs full SessionHandle
-};
-```
-
-## ContainerSessionBackend (k8s)
-
-The only session backend. Creates a k8s pod per session using
-`@kubernetes/client-node`.
+### Connection
 
 ```mermaid
-graph TD
-    Open["WebSocket 'open' message"]
-    Check["Check pods map + k8s API"]
-    Hit["Running pod → return proxy"]
-    Create["coreApi.createNamespacedPod()"]
-    Wait["Poll readNamespacedPod()<br/>until Running + Ready<br/><small>timeout: 60s</small>"]
-    Proxy["Create proxy AgentSession<br/><small>WebSocket to pod</small>"]
-    Return["Return SessionHandle"]
+sequenceDiagram
+    participant C as Client
+    participant WS as WebSocket Handler
+    participant SM as Session Manager
+    participant PM as Pod Manager
 
-    Open --> Check
-    Check -->|"running"| Hit --> Return
-    Check -->|"none"| Create --> Wait --> Proxy --> Return
+    C->>WS: Connect + auth
+    C->>WS: open {conversationId}
+
+    WS->>SM: getOrCreateBridge(userId)
+
+    alt Pod not running
+        SM->>PM: ensurePod(userId)
+        PM->>PM: Create pod + init container
+        PM-->>SM: pod ready
+        SM->>PM: execInPod(userId, ["pi", "--mode", "rpc", "--continue"])
+        PM-->>SM: stdin/stdout streams
+        SM->>SM: new Bridge(streams)
+    end
+
+    WS->>SM: switchSession(userId, sessionPath)
+    WS->>SM: getMessages(userId)
+    WS-->>C: ready {messages}
 ```
-
-### Pod Configuration
-
-Each pod runs with strict isolation:
-
-| Setting | Value |
-|---------|-------|
-| `runAsNonRoot` | `true` |
-| `runAsUser` | `1000` |
-| `readOnlyRootFilesystem` | `true` |
-| `allowPrivilegeEscalation` | `false` |
-| `capabilities.drop` | `["ALL"]` |
-| Memory limit | `512Mi` |
-| CPU limit | `500m` |
-| Scratch tmpfs | `256Mi` (Memory-backed) |
-| Workspace | PVC mount at `/work` |
-
-### Pod Naming
-
-`agent-{userId first 8}-{conversationId first 8}` (lowercase alphanumeric).
-
-### WebSocket Proxy
-
-The `ContainerSessionBackend` creates a proxy `AgentSession` that looks like
-a normal session to the WebSocket handler but forwards all calls via WebSocket
-to the agent pod:
-
-- **In-cluster:** direct WebSocket to pod IP (`ws://<podIP>:8080`)
-- **Out-of-cluster:** k8s PortForward API tunnel to `127.0.0.1:<localPort>`
-
-Methods:
-- `subscribe(callback)` → connects WebSocket, parses incoming JSON events
-- `prompt(text)` → sends `{ type: "prompt", text }` to pod
-- `abort()` → sends `{ type: "abort" }` to pod
-- `dispose()` → closes WebSocket, closes port-forward tunnel
 
 ### Idle Timeout
 
-Every 60 seconds, the backend checks all tracked pods. Any pod idle longer
-than `AGENT_IDLE_TIMEOUT_MS` (default: 30 minutes) is deleted via the k8s API.
+```mermaid
+graph LR
+    Active["Pod running<br/>lastActive = now"] -->|"No activity for 30min"| Evict["Pod Manager<br/>evictIdle()"]
+    Evict -->|"deletePod()"| Deleted["Pod deleted<br/>hostPath preserved"]
+    Deleted -->|"Next user request"| Recreate["ensurePod()<br/>Pod recreated"]
+    Recreate --> Active
+```
+
+The Pod Manager checks every 60 seconds for idle pods. When evicted:
+- The Bridge is closed (pending RPCs rejected)
+- The pod is deleted (gracePeriod: 5s)
+- The hostPath volume is **preserved** — sessions and files survive
+- Next user interaction recreates the pod and re-execs pi
+
+### Pod Failure
+
+```mermaid
+graph TD
+    Fail["Pod crash / exec exit"] -->|"Bridge detects stdout end"| Close["Bridge.close()"]
+    Close --> Clear["Session cleared from cache"]
+    Clear -->|"Next request"| Verify["ensurePod: verify in k8s"]
+    Verify -->|"Pod gone"| Recreate["Create new pod"]
+    Verify -->|"Pod exists but not Running"| Delete["Delete + recreate"]
+    Recreate --> Connect["Exec pi, create Bridge"]
+```
+
+The Pod Manager verifies pod existence with the k8s API before trusting its in-memory record. If the pod was deleted externally (kubectl, Tilt restart, node crash), it detects this and recreates.
+
+### Failure Backoff
+
+| Attempt | Delay | Action |
+|---------|-------|--------|
+| 1 | Immediate | Recreate pod |
+| 2 | 5 seconds | Recreate pod |
+| 3+ | 30 seconds | Surface error to user, stop retrying |
+
+The backoff counter resets when a pod successfully starts.
+
+## Multi-Tab Behaviour
+
+All tabs connected as the same user share one Bridge:
+
+- Tab A sends a prompt → both Tab A and Tab B see the streaming response
+- Tab B sends a prompt while Tab A's is processing → pi queues it via `followUp` behaviour
+- Tab A disconnects → Tab B continues receiving events
+- All tabs disconnect → Bridge stays alive until idle timeout
+
+## Conversation Switching
+
+When a user switches conversations:
+
+1. Frontend closes the old WebSocket, opens a new one
+2. Server sends `switch_session` RPC to pi with the session file path
+3. Pi loads the session from disk
+4. Server calls `get_messages` to fetch the history
+5. History sent to frontend in the `ready` message
+6. Frontend renders the full conversation
+
+Pi's session files live on the hostPath at `~/.pi/agent/sessions/`. The SQLite `conversations.pi_session_id` column stores the absolute path to each session file.

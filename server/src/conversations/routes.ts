@@ -1,23 +1,28 @@
+/**
+ * Conversations route — CRUD for conversation metadata.
+ *
+ * Conversation content (messages) lives in pi's session files on the PVC.
+ * This route only manages the metadata the frontend sidebar needs.
+ */
+
 import { Router, Response } from 'express';
 import { v4 as uuid } from 'uuid';
-import { rmSync, existsSync } from 'fs';
-import { resolve } from 'path';
 import { getDb } from '../db.js';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
-import { CONFIG } from '../config.js';
-import { sessionCache } from '../agent/sessions.js';
+import { sessionManager } from '../agent/sessions.js';
 
 const router = Router();
 
-// All routes require authentication
 router.use(verifyToken);
 
-interface Conversation {
+interface ConversationRow {
   id: string;
   user_id: string;
   title: string;
   model: string | null;
   provider: string | null;
+  pi_session_id: string | null;
+  last_message_preview: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -30,14 +35,25 @@ router.get('/', (req: AuthRequest, res: Response) => {
   }
 
   const db = getDb();
-  const conversations = db.prepare(`
-    SELECT id, title, model, provider, created_at, updated_at
+  const rows = db.prepare(`
+    SELECT id, title, model, provider, pi_session_id, last_message_preview, created_at, updated_at
     FROM conversations
     WHERE user_id = ?
     ORDER BY updated_at DESC
-  `).all(req.user.id) as Conversation[];
+  `).all(req.user.id) as ConversationRow[];
 
-  res.json({ conversations });
+  res.json({
+    conversations: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      model: r.model,
+      provider: r.provider,
+      piSessionId: r.pi_session_id,
+      lastMessagePreview: r.last_message_preview,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    })),
+  });
 });
 
 // POST /api/conversations - Create conversation
@@ -47,25 +63,27 @@ router.post('/', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const { title, model, provider } = req.body;
+  const { title } = req.body;
   const id = uuid();
   const now = Date.now();
 
   const db = getDb();
   db.prepare(`
-    INSERT INTO conversations (id, user_id, title, model, provider, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, req.user.id, title ?? 'New conversation', model ?? null, provider ?? null, now, now);
+    INSERT INTO conversations (id, user_id, title, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, req.user.id, title ?? 'New conversation', now, now);
 
   res.status(201).json({
     conversation: {
       id,
       title: title ?? 'New conversation',
-      model: model ?? null,
-      provider: provider ?? null,
+      model: null,
+      provider: null,
+      piSessionId: null,
+      lastMessagePreview: null,
       createdAt: now,
       updatedAt: now,
-    }
+    },
   });
 });
 
@@ -77,18 +95,29 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
   }
 
   const db = getDb();
-  const conversation = db.prepare(`
-    SELECT id, title, model, provider, created_at, updated_at
+  const row = db.prepare(`
+    SELECT id, title, model, provider, pi_session_id, last_message_preview, created_at, updated_at
     FROM conversations
     WHERE id = ? AND user_id = ?
-  `).get(req.params.id, req.user.id) as Conversation | undefined;
+  `).get(req.params.id, req.user.id) as ConversationRow | undefined;
 
-  if (!conversation) {
+  if (!row) {
     res.status(404).json({ error: 'Conversation not found' });
     return;
   }
 
-  res.json({ conversation });
+  res.json({
+    conversation: {
+      id: row.id,
+      title: row.title,
+      model: row.model,
+      provider: row.provider,
+      piSessionId: row.pi_session_id,
+      lastMessagePreview: row.last_message_preview,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    },
+  });
 });
 
 // PATCH /api/conversations/:id - Update conversation
@@ -98,82 +127,76 @@ router.patch('/:id', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const { title, model, provider } = req.body;
+  const { title } = req.body;
   const now = Date.now();
 
   const db = getDb();
-  
-  // Check ownership
+
   const existing = db.prepare(`
     SELECT id FROM conversations WHERE id = ? AND user_id = ?
   `).get(req.params.id, req.user.id);
-  
+
   if (!existing) {
     res.status(404).json({ error: 'Conversation not found' });
     return;
   }
 
-  // Build update query dynamically
-  const updates: string[] = ['updated_at = ?'];
-  const values: (string | number | null)[] = [now];
-  
   if (title !== undefined) {
-    updates.push('title = ?');
-    values.push(title);
-  }
-  if (model !== undefined) {
-    updates.push('model = ?');
-    values.push(model);
-  }
-  if (provider !== undefined) {
-    updates.push('provider = ?');
-    values.push(provider);
+    db.prepare(`
+      UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?
+    `).run(title, now, req.params.id);
+  } else {
+    db.prepare(`
+      UPDATE conversations SET updated_at = ? WHERE id = ?
+    `).run(now, req.params.id);
   }
 
-  values.push(req.params.id as string);
-  
-  db.prepare(`
-    UPDATE conversations SET ${updates.join(', ')} WHERE id = ?
-  `).run(...values);
-
-  const conversation = db.prepare(`
-    SELECT id, title, model, provider, created_at, updated_at
+  const row = db.prepare(`
+    SELECT id, title, model, provider, pi_session_id, last_message_preview, created_at, updated_at
     FROM conversations WHERE id = ?
-  `).get(req.params.id) as Conversation;
+  `).get(req.params.id) as ConversationRow;
 
-  res.json({ conversation });
+  res.json({
+    conversation: {
+      id: row.id,
+      title: row.title,
+      model: row.model,
+      provider: row.provider,
+      piSessionId: row.pi_session_id,
+      lastMessagePreview: row.last_message_preview,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    },
+  });
 });
 
 // DELETE /api/conversations/:id - Delete conversation
-router.delete('/:id', (req: AuthRequest, res: Response) => {
+router.delete('/:id', async (req: AuthRequest, res: Response) => {
   if (!req.user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
   const db = getDb();
-  
-  const result = db.prepare(`
-    DELETE FROM conversations WHERE id = ? AND user_id = ?
-  `).run(req.params.id, req.user.id);
 
-  if (result.changes === 0) {
+  // Get pi_session_id before deleting
+  const row = db.prepare(`
+    SELECT pi_session_id FROM conversations WHERE id = ? AND user_id = ?
+  `).get(req.params.id, req.user.id) as { pi_session_id: string | null } | undefined;
+
+  if (!row) {
     res.status(404).json({ error: 'Conversation not found' });
     return;
   }
 
-  // Clean up workspace files and dispose agent session (§5.14)
-  const convId = req.params.id as string;
-  try {
-    sessionCache.dispose(req.user.id, convId);
-  } catch { /* session may not exist */ }
+  db.prepare(`DELETE FROM conversations WHERE id = ?`).run(req.params.id);
 
-  const workspaceDir = resolve(CONFIG.workspaceRoot, req.user.id, convId);
-  if (existsSync(workspaceDir)) {
+  // Clean up pi session files on the PVC
+  if (row.pi_session_id) {
     try {
-      rmSync(workspaceDir, { recursive: true, force: true });
+      await sessionManager.deleteConversation(req.user.id, row.pi_session_id);
     } catch (err) {
-      console.error('Failed to clean up workspace:', err);
+      console.error('Failed to clean up pi session:', err);
     }
   }
 

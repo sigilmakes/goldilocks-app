@@ -7,6 +7,8 @@ export interface ToolCall {
   result?: unknown;
   isError?: boolean;
   status: 'running' | 'done';
+  /** Accumulated streaming content from toolcall_delta events. */
+  streamContent?: string;
 }
 
 export type AssistantBlock =
@@ -17,64 +19,6 @@ export type AssistantBlock =
 export type ChatMessage =
   | { role: 'user'; text: string; files?: string[]; timestamp: number }
   | { role: 'assistant'; blocks: AssistantBlock[]; timestamp: number };
-
-// --- localStorage persistence helpers ---
-
-const STORAGE_KEY = 'goldilocks-chat-history';
-const MAX_STORED_CONVERSATIONS = 50;
-
-function loadHistory(): Record<string, ChatMessage[]> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* corrupt data, start fresh */ }
-  return {};
-}
-
-/** Trim large tool results to avoid blowing localStorage quota */
-function trimForStorage(messages: ChatMessage[]): ChatMessage[] {
-  return messages.map((msg) => {
-    if (msg.role !== 'assistant') return msg;
-    return {
-      ...msg,
-      blocks: msg.blocks.map((block) => {
-        if (block.type !== 'tool_call') return block;
-        const result = block.data.result;
-        const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
-        // Truncate results larger than 2KB
-        if (resultStr.length > 2048) {
-          return {
-            ...block,
-            data: { ...block.data, result: resultStr.slice(0, 2048) + '\n... (truncated for storage)' },
-          };
-        }
-        return block;
-      }),
-    };
-  });
-}
-
-function saveHistory(history: Record<string, ChatMessage[]>) {
-  try {
-    // Prune oldest conversations if we exceed the limit
-    const keys = Object.keys(history);
-    if (keys.length > MAX_STORED_CONVERSATIONS) {
-      const sorted = keys.sort((a, b) => {
-        const aLast = history[a]?.[history[a].length - 1]?.timestamp ?? 0;
-        const bLast = history[b]?.[history[b].length - 1]?.timestamp ?? 0;
-        return aLast - bLast;
-      });
-      for (let i = 0; i < sorted.length - MAX_STORED_CONVERSATIONS; i++) {
-        delete history[sorted[i]];
-      }
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  } catch {
-    console.warn('Failed to save chat history to localStorage (quota exceeded?)');
-  }
-}
-
-// ---
 
 interface ChatState {
   messages: ChatMessage[];
@@ -87,8 +31,8 @@ interface ChatState {
   activeConversationId: string | null;
 
   // Actions
-  /** Load messages for a conversation (from localStorage cache) */
   loadConversation: (conversationId: string | null) => void;
+  setMessages: (messages: ChatMessage[]) => void;
   addUserMessage: (text: string, files?: string[]) => void;
   startAssistantMessage: () => void;
   appendTextDelta: (delta: string) => void;
@@ -100,20 +44,6 @@ interface ChatState {
   endAgent: () => void;
   clearMessages: () => void;
   setStreaming: (streaming: boolean) => void;
-  /** Delete stored history for a conversation */
-  deleteConversationHistory: (conversationId: string) => void;
-}
-
-/** Persist current messages to localStorage for the active conversation */
-function persistMessages(conversationId: string | null, messages: ChatMessage[]) {
-  if (!conversationId) return;
-  const history = loadHistory();
-  if (messages.length === 0) {
-    delete history[conversationId];
-  } else {
-    history[conversationId] = trimForStorage(messages);
-  }
-  saveHistory(history);
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -125,30 +55,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeConversationId: null,
 
   loadConversation: (conversationId) => {
-    // Save current conversation's messages first
-    const state = get();
-    if (state.activeConversationId && state.messages.length > 0) {
-      persistMessages(state.activeConversationId, state.messages);
-    }
-
-    if (!conversationId) {
-      set({
-        messages: [],
-        isStreaming: false,
-        currentText: '',
-        currentThinking: '',
-        activeTools: new Map(),
-        activeConversationId: null,
-      });
-      return;
-    }
-
-    // Load from localStorage
-    const history = loadHistory();
-    const stored = history[conversationId] ?? [];
-
     set({
-      messages: stored,
+      messages: [],
       isStreaming: false,
       currentText: '',
       currentThinking: '',
@@ -157,16 +65,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  setMessages: (messages) => {
+    set({ messages });
+  },
+
   addUserMessage: (text, files) => {
-    set((state) => {
-      const newMessages = [
+    set((state) => ({
+      messages: [
         ...state.messages,
         { role: 'user' as const, text, files, timestamp: Date.now() },
-      ];
-      // Persist after adding
-      persistMessages(state.activeConversationId, newMessages);
-      return { messages: newMessages };
-    });
+      ],
+    }));
   },
 
   startAssistantMessage: () => {
@@ -193,7 +102,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startToolCall: (toolCallId, toolName, args) => {
     set((state) => {
       const newTools = new Map(state.activeTools);
+      const existing = newTools.get(toolCallId);
       newTools.set(toolCallId, {
+        ...existing,
         toolCallId,
         toolName,
         args,
@@ -203,8 +114,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall: (_toolCallId, _content) => {
-    // Could show streaming output from tools — no-op for now
+  updateToolCall: (toolCallId, content) => {
+    set((state) => {
+      const newTools = new Map(state.activeTools);
+      const tool = newTools.get(toolCallId);
+      if (tool) {
+        newTools.set(toolCallId, {
+          ...tool,
+          streamContent: (tool.streamContent ?? '') + content,
+        });
+      }
+      return { activeTools: newTools };
+    });
   },
 
   endToolCall: (toolCallId, result, isError) => {
@@ -238,20 +159,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     if (blocks.length > 0) {
-      set((state) => {
-        const newMessages = [
+      set((state) => ({
+        messages: [
           ...state.messages,
           { role: 'assistant' as const, blocks, timestamp: Date.now() },
-        ];
-        // Persist after completing a message
-        persistMessages(state.activeConversationId, newMessages);
-        return {
-          messages: newMessages,
-          currentText: '',
-          currentThinking: '',
-          activeTools: new Map(),
-        };
-      });
+        ],
+        currentText: '',
+        currentThinking: '',
+        activeTools: new Map(),
+      }));
     }
   },
 
@@ -264,8 +180,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: () => {
-    const state = get();
-    persistMessages(state.activeConversationId, []);
     set({
       messages: [],
       isStreaming: false,
@@ -276,10 +190,4 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setStreaming: (streaming) => set({ isStreaming: streaming }),
-
-  deleteConversationHistory: (conversationId) => {
-    const history = loadHistory();
-    delete history[conversationId];
-    saveHistory(history);
-  },
 }));

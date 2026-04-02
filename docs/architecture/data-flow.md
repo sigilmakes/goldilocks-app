@@ -1,134 +1,127 @@
 # Data Flow
 
-How data moves through the system for each major user action.
-
-## Authentication
+## Prompt Flow
 
 ```mermaid
 sequenceDiagram
-    participant LoginForm
-    participant AuthStore as useAuthStore
-    participant API as api/client.ts
-    participant Server as auth/routes.ts
-    participant DB as SQLite
+    participant UI as Browser
+    participant WS as WebSocket Handler
+    participant SM as Session Manager
+    participant B as Bridge
+    participant Pi as pi --mode rpc
 
-    LoginForm->>AuthStore: login(email, password)
-    AuthStore->>API: api.post('/auth/login', { email, password })
-    API->>Server: POST /api/auth/login
-    Server->>DB: SELECT * FROM users WHERE email = ?
-    Server->>Server: bcrypt.compare(password, hash)
-    Server->>Server: generateToken({ id, email })
-    Server-->>API: { token, user }
-    API-->>AuthStore: set({ token, user, isAuthenticated: true })
-    Note over AuthStore: token persisted to localStorage via zustand/persist
-    AuthStore-->>LoginForm: navigate to /workspace
+    UI->>WS: {type: "prompt", text: "hello"}
+    WS->>SM: prompt(userId, "hello")
+    SM->>B: prompt("hello")
+    B->>Pi: {"type":"prompt","message":"hello","streamingBehavior":"followUp"}\n
+
+    Pi-->>B: {"type":"response","success":true}\n
+
+    loop Streaming events
+        Pi-->>B: message_update (thinking_delta)
+        B-->>WS: event
+        WS-->>UI: {type: "thinking_delta", delta: "..."}
+
+        Pi-->>B: message_update (text_delta)
+        B-->>WS: event
+        WS-->>UI: {type: "text_delta", delta: "Hi!"}
+
+        Pi-->>B: message_update (toolcall_start)
+        B-->>WS: event
+        WS-->>UI: {type: "tool_start", toolName: "write", ...}
+
+        Pi-->>B: message_update (toolcall_delta)
+        B-->>WS: event
+        WS-->>UI: {type: "tool_update", content: "..."}
+    end
+
+    Pi-->>B: tool_execution_end
+    B-->>WS: event
+    WS-->>UI: {type: "tool_end", result: "...", isError: false}
+
+    Pi-->>B: agent_end
+    B-->>WS: event
+    WS-->>UI: {type: "agent_end"}
+
+    SM-->>WS: prompt resolved
 ```
 
-The `api/client.ts` module automatically injects the Bearer token from
-`useAuthStore.getState().token` into every subsequent request.
-
-## Chat Message Flow
+## Model Selection Flow
 
 ```mermaid
-graph LR
-    subgraph "User Action"
-        Input["ChatPanel textarea"]
-    end
+sequenceDiagram
+    participant UI as Browser
+    participant API as REST API
+    participant SM as Session Manager
+    participant B as Bridge
+    participant Pi as pi --mode rpc
 
-    subgraph "Frontend State"
-        ChatStore["useChatStore"]
-        LocalStorage["localStorage<br/><small>goldilocks-chat-history</small>"]
-    end
+    UI->>API: GET /api/models
+    API->>SM: getAvailableModels(userId)
+    SM->>B: rpc("get_available_models")
+    B->>Pi: {"type":"get_available_models"}\n
+    Pi-->>B: {"type":"response","data":{"models":[...]}}\n
+    B-->>SM: {models: [...]}
+    SM-->>API: models
+    API-->>UI: {models: [...], providers: [...]}
 
-    subgraph "Network"
-        WS["WebSocket"]
-    end
-
-    subgraph "Server"
-        WSHandler["websocket.ts"]
-        PiSDK["Pi SDK"]
-    end
-
-    Input -->|"send(text)"| ChatStore
-    ChatStore -->|"addUserMessage"| LocalStorage
-    Input -->|"WS prompt"| WS
-    WS --> WSHandler
-    WSHandler --> PiSDK
-    PiSDK -->|"events"| WSHandler
-    WSHandler -->|"WS messages"| WS
-    WS -->|"dispatch"| ChatStore
-    ChatStore -->|"endMessage"| LocalStorage
+    UI->>API: POST /api/models/select {modelId}
+    API->>SM: setModel(userId, modelId)
+    SM->>B: rpc("set_model", {provider, modelId})
+    B->>Pi: {"type":"set_model","provider":"anthropic","modelId":"claude..."}\n
+    Pi-->>B: response
 ```
-
-**Key detail:** Messages are stored in `localStorage` only, not in the server
-database. The `conversations` table stores metadata (title, model, timestamps)
-but not message content. This means clearing browser data loses chat history.
-
-### Store Actions During Streaming
-
-| WebSocket Event | Store Action | State Change |
-|----------------|--------------|--------------|
-| (user sends) | `addUserMessage(text)` | Appends user message, persists to localStorage |
-| (user sends) | `startAssistantMessage()` | Sets `isStreaming=true`, clears `currentText`/`currentThinking`/`activeTools` |
-| `text_delta` | `appendTextDelta(delta)` | Concatenates to `currentText` |
-| `thinking_delta` | `appendThinkingDelta(delta)` | Concatenates to `currentThinking` |
-| `tool_start` | `startToolCall(id, name, args)` | Adds to `activeTools` Map |
-| `tool_end` | `endToolCall(id, result, isError)` | Updates tool in `activeTools` Map |
-| `message_end` | `endMessage()` | Flushes `currentText`/`currentThinking`/`activeTools` into a `ChatMessage`, appends to `messages[]`, persists to localStorage |
-| `agent_end` | `endAgent()` | Calls `endMessage()` if pending, sets `isStreaming=false` |
 
 ## File Upload Flow
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant ChatPanel
-    participant FilesStore as useFilesStore
-    participant Server as files/routes.ts
-    participant FS as Filesystem
+    participant UI as Browser
+    participant API as REST API
+    participant PM as Pod Manager
+    participant Pod as Agent Pod
 
-    User->>ChatPanel: clicks paperclip, selects file
-    ChatPanel->>ChatPanel: FileReader.readAsDataURL(file)
-    ChatPanel->>Server: POST /api/conversations/:id/upload<br/>{ filename, content: base64 }
-    Server->>Server: validate extension, check size ≤ 10MB
-    Server->>Server: sanitize filename (basename, strip special chars)
-    Server->>Server: validateWorkspacePath() — path traversal check
-    Server->>FS: write to WORKSPACE_ROOT/<userId>/<convId>/workspace/<filename>
-    Server-->>ChatPanel: { file: { name, path, size } }
-    ChatPanel->>ChatPanel: send("I've uploaded filename.cif")
-    ChatPanel->>FilesStore: fetch(conversationId) — refresh file list
+    UI->>API: POST /api/files/upload {filename, content(base64)}
+    API->>PM: ensurePod(userId)
+    PM-->>API: pod ready
+    API->>PM: execInPod(userId, ["sh", "-c", "echo ... | base64 -d > file"])
+    PM->>Pod: k8s exec
+    Pod-->>PM: done
+    PM-->>API: done
+    API-->>UI: {file: {name, path, size}}
 ```
 
-Files are uploaded as **JSON with base64 content**, not multipart/form-data.
-The `workspace-guard.ts` module validates that the resolved path stays within
-the workspace directory (`resolve(basePath, filename).startsWith(basePath)`).
-
-## Quick Generate Flow (No Agent)
+## Conversation Lifecycle
 
 ```mermaid
-sequenceDiagram
-    participant ContextPanel as ContextPanel<br/>(ParametersTab)
-    participant API as api/client.ts
-    participant Server as quickgen/routes.ts
-    participant CLI as goldilocks CLI
-    participant FS as Filesystem
-
-    ContextPanel->>API: api.post('/predict', { structurePath, conversationId, model })
-    API->>Server: POST /api/predict
-    Server->>Server: validateWorkspacePath(structurePath)
-    Server->>CLI: execFile('goldilocks', ['predict', ...], { timeout: 60s })
-    CLI-->>Server: JSON prediction result
-    Server-->>API: { prediction: { kdist_median, k_grid, ... } }
-    API-->>ContextPanel: update PredictionSummary
-
-    ContextPanel->>API: api.post('/generate', { structurePath, conversationId, functional })
-    API->>Server: POST /api/generate
-    Server->>CLI: execFile('goldilocks', ['generate', ...], { timeout: 60s })
-    CLI->>FS: writes .in file to workspace
-    CLI-->>Server: { filename, content }
-    Server-->>API: { filename, content, downloadUrl }
-    API-->>ContextPanel: show generated file
+graph TD
+    New["New Conversation button"] -->|"POST /api/conversations"| DB["SQLite: create row<br/>pi_session_id = null"]
+    DB --> Open["User clicks conversation"]
+    Open -->|"WS: open {conversationId}"| Check{"pi_session_id<br/>in DB?"}
+    Check -->|null| NewSession["Pi: new_session<br/>Pi: get_state → sessionPath<br/>DB: store pi_session_id"]
+    Check -->|exists| Switch["Pi: switch_session {sessionPath}"]
+    NewSession --> Load["Pi: get_messages → history"]
+    Switch --> Load
+    Load --> Ready["WS: ready {messages}"]
+    Ready --> Chat["User sends prompts"]
 ```
 
-This bypasses the AI agent entirely. The ContextPanel's "Parameters" tab calls
-REST endpoints that invoke the `goldilocks` CLI directly via `child_process.execFile()`.
+## Data Persistence
+
+```mermaid
+graph LR
+    subgraph Host["Host Machine (./data/)"]
+        SQLite["goldilocks.db<br/>Users, conversations,<br/>API keys, settings"]
+        Homes["homes/{userId}/<br/>Pi sessions, user files,<br/>.pi/ config"]
+        Logs["logs/<br/>bridge-*.log<br/>pod-manager.log"]
+    end
+    subgraph Kind["Kind Node"]
+        WebPod["Web App Pod<br/>/data → hostPath"]
+        AgentPod["Agent Pod<br/>/home/node → hostPath"]
+    end
+
+    SQLite -.->|"hostPath mount"| WebPod
+    Homes -.->|"hostPath mount"| AgentPod
+```
+
+All data survives pod restarts and cluster rebuilds because it lives on the host filesystem via bind-mounts.

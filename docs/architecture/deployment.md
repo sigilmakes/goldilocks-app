@@ -1,132 +1,102 @@
 # Deployment
 
-## Architecture
-
-**Kubernetes is the only way to run agent sessions.** Local dev uses `kind`
-(Kubernetes IN Docker), production uses a real k8s cluster. Same code, same
-manifests, same behaviour.
-
-## Development (Local with kind)
+## Development (kind + Tilt)
 
 ```mermaid
-graph LR
-    Vite["Vite Dev Server<br/><small>localhost:5173</small>"]
-    Express["Express Server<br/><small>localhost:3000</small>"]
-    SQLite[("SQLite<br/><small>./data/goldilocks.db</small>")]
-    Kind["kind cluster"]
-    AgentPod["Agent Pod<br/><small>k8s pod in kind</small>"]
+graph TD
+    subgraph Host["Developer Machine"]
+        Code["Source code"]
+        Data["./data/<br/>SQLite, homes, logs"]
+        Docker["Docker"]
+    end
+    subgraph Kind["Kind Cluster"]
+        subgraph NS["goldilocks namespace"]
+            Web["web-app Deployment<br/>Express + Vite"]
+            Agent["agent-{userId} Pod<br/>pi --mode rpc"]
+            SA["agent-manager<br/>ServiceAccount"]
+        end
+    end
 
-    Vite -->|"proxy /api, /ws"| Express
-    Express --> SQLite
-    Express -->|"k8s API"| Kind
-    Kind --> AgentPod
+    Code -->|"Tilt live_update"| Web
+    Code -->|"docker build + kind load"| Agent
+    Data -->|"kind extraMounts"| Kind
+    SA -->|"RBAC: pods, pods/exec"| Agent
 ```
 
-```bash
-npm install
-npm run k8s:setup   # one-time: create kind cluster, build agent image, apply manifests
-npm run dev          # starts both concurrently
+### Kind Cluster Configuration
+
+The kind cluster is configured via `deploy/kind-config.yaml`:
+
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: ./data
+        containerPath: /data/goldilocks
 ```
 
-Vite proxies `/api` and `/ws` to port 3000 (configured in `frontend/vite.config.ts`).
-Both servers hot-reload on file changes. Agent sessions run in k8s pods inside
-the kind cluster. Express connects to agent pods via the k8s PortForward API.
+This bind-mounts `./data/` on the host into the kind node at `/data/goldilocks`. Both the web app (SQLite, logs) and agent pods (user homes) use hostPath volumes pointing under this path.
 
-### Daily Workflow
+### Tilt Resources
 
-```bash
-npm run dev                       # Start web app (agents in kind)
-npm run k8s:build-agent           # Rebuild + reload agent image
-kubectl get pods -n goldilocks    # Check agent pods
-npm run k8s:teardown              # Delete kind cluster
-```
+| Resource | Type | Description |
+|----------|------|-------------|
+| `web-app` | k8s Deployment | Express server + Vite dev server with live_update |
+| `agent-image` | local_resource | Builds agent Docker image and loads into kind |
+| `uncategorized` | k8s | Namespace, RBAC, secrets |
 
-### Dev Scripts
+### Images
 
-| Script | File | Purpose |
-|--------|------|---------||
-| `npm run k8s:setup` | `deploy/setup-dev.sh` | Creates kind cluster, builds agent image, loads it into kind, applies base k8s manifests |
-| `npm run k8s:teardown` | `deploy/teardown-dev.sh` | Deletes the kind cluster and all its contents |
-| `npm run k8s:build-agent` | (inline in `package.json`) | Rebuilds agent Docker image and reloads it into kind |
+| Image | Dockerfile | Purpose |
+|-------|-----------|---------|
+| `goldilocks-web` | `Dockerfile.web.dev` | Dev web app (tsx watch + Vite) |
+| `goldilocks-agent` | `Dockerfile.agent` | Agent container (pi installed, `sleep infinity`) |
 
-Prerequisites for local dev: `docker`, `kind`, `kubectl`.
+The agent image is not deployed as a k8s resource — the web app creates agent pods dynamically. Tilt builds it and loads it into kind via `local_resource`.
 
-The kind cluster is configured via `deploy/kind-config.yaml` (single control-plane
-node with port 30000 mapped to host port 3000).
+## Production
 
-## Kubernetes (Production)
+Production deployment is planned but not yet implemented. Key differences from dev:
 
-```mermaid
-graph LR
-    Ingress["Ingress<br/><small>TLS termination</small>"]
-    WebApp["Web App<br/><small>Deployment</small><br/>Express + React<br/>ContainerSessionBackend"]
-    AgentPod["Agent Pod<br/><small>ephemeral Pod</small><br/>Pi SDK + MCP client"]
-    MCP["MCP Server<br/><small>Deployment</small><br/>ML inference<br/>HPC gateway"]
-    HPC["HPC Cluster"]
+- **Real k8s cluster** instead of kind
+- **Production Dockerfile** for web app (multi-stage build, no dev deps, `node server/dist/index.js`)
+- **Ingress + TLS** for external access
+- **Real secrets** (not dev defaults)
+- **Network policies** to restrict agent pod egress
+- **Resource quotas** per user pod
+- **PVC** instead of hostPath for user homes (hostPath is not safe in multi-node clusters)
 
-    Ingress --> WebApp
-    WebApp -->|"WS proxy"| AgentPod
-    AgentPod -->|"MCP protocol"| MCP
-    MCP -->|"SSH"| HPC
-```
+## Kubernetes Resources
 
-### Three-Tier Architecture
+### Namespace
 
-| Component | Type | Persistence | Isolation | Access |
-|-----------|------|-------------|-----------|--------|
-| **Web App** | Deployment | Yes (PVC for SQLite + workspaces) | — | Serves UI, auth, API, manages agent lifecycle |
-| **Agent** | Ephemeral Pod | Yes (per-user PVC) | Full (per-user) | Only MCP server (network policy) |
-| **MCP Server** | Deployment | Yes (model cache) | — | ML models, HPC job submission via SSH |
+All resources live in the `goldilocks` namespace.
 
-### Kubernetes Manifests
+### RBAC
 
-All in `k8s/` (top-level, promoted from `deploy/k8s/`):
+The `agent-manager` ServiceAccount is used by the web app pod. It has permissions to:
 
-| Manifest | Purpose |
-|----------|---------|
-| `namespace.yaml` | `goldilocks` namespace |
-| `rbac.yaml` | ServiceAccount with pod create/delete/portforward + PVC permissions |
-| `network-policies.yaml` | Agent pods can only reach MCP server (egress restricted) |
-| `resource-quota.yaml` | Limits total agent pods per namespace |
-| `web-app.yaml` | Web app Deployment + Service + PVC |
-| `mcp-server.yaml` | MCP server Deployment + Service |
-| `agent-pod-template.yaml` | Reference spec for ephemeral agent pods |
-| `workspace-pvc-template.yaml` | Per-user workspace PVC template |
-| `ingress.yaml` | Ingress with TLS |
-| `secrets.yaml` | Secret templates for JWT_SECRET, ENCRYPTION_KEY, API keys |
+- Create, delete, get, list, watch **pods** (for agent pod management)
+- Get pod **logs** (for debugging)
+- Create, get **pods/exec** (for Bridge communication and file operations)
+- Create **pods/portforward** (reserved for future use)
+- Get **secrets** (for HPC SSH key, future use)
 
-### Container Images
+### Web App Deployment
 
-Built from Dockerfiles in `deploy/docker/`:
+Single-replica deployment with:
+- Ports: 3000 (Express), 5173 (Vite)
+- Volume: hostPath at `/data/goldilocks` for SQLite and logs
+- Probes: readiness and liveness on `/api/health`
+- Resources: 250m-2 CPU, 512Mi-2Gi memory
 
-| Image | Dockerfile | Contents |
-|-------|-----------|----------|
-| `goldilocks-web` | `deploy/docker/Dockerfile.web` | Express + built React + SQLite |
-| `goldilocks-agent` | `deploy/docker/Dockerfile.agent` | Minimal Pi SDK + MCP client, runs with `agent-entrypoint.sh` |
-| `goldilocks-mcp` | `deploy/docker/Dockerfile.mcp` | Python MCP server, ML models, HPC SSH client |
+### Agent Pods (dynamic)
 
-## Environment Variables
-
-See the full table in the [README](../../README.md#environment-variables).
-
-Critical production-only requirements:
-- `JWT_SECRET` — **must** be set (server throws on start if missing in production)
-- `ENCRYPTION_KEY` — **must** be set (same)
-- `AGENT_IMAGE` — container image for agent pods
-- `K8S_NAMESPACE` — namespace for agent pods (default: `goldilocks`)
-- `CORS_ORIGIN` — restrict to your domain
-
-## Graceful Shutdown
-
-`server/src/index.ts` handles `SIGINT` and `SIGTERM`:
-
-```ts
-function shutdown() {
-  sessionCache.shutdown();  // Delete all agent pods
-  closeDb();                // Close SQLite connection
-  server.close();           // Stop accepting new connections
-}
-```
-
-The `ContainerSessionBackend.shutdown()` deletes all running agent pods
-and clears the idle check interval.
+Created by the Pod Manager when a user first interacts. Each pod has:
+- **Init container**: Runs as root to `chown` the hostPath volume for uid 1000
+- **Main container**: Runs as uid 1000, `sleep infinity`, pi exec'd in
+- **Home volume**: hostPath at `./data/homes/{userId}/` → `/home/node`
+- **Tmp volume**: emptyDir for scratch space
+- **Env vars**: User API keys (decrypted from DB), `HOME=/home/node`

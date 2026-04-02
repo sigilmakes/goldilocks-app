@@ -1,148 +1,65 @@
-# Security Model
+# Security
 
-## Authentication & Authorization
+## Authentication
 
-```mermaid
-graph LR
-    Login["POST /api/auth/login"]
-    Bcrypt["bcrypt.compare()"]
-    JWT["jwt.sign()<br/><small>{ id, email }</small>"]
-    Token["JWT Token<br/><small>7-day expiry</small>"]
-    Client["Client stores in<br/><small>localStorage via zustand/persist</small>"]
-    Request["Subsequent requests"]
-    Verify["verifyToken middleware<br/><small>jwt.verify()</small>"]
-    Handler["Route handler<br/><small>req.user.id available</small>"]
+- **JWT tokens** with 7-day expiry. Secret must be set via `JWT_SECRET` in production.
+- **bcrypt** password hashing with automatic salt.
+- **Rate limiting** on auth endpoints (20 requests per 15 minutes) and API endpoints (60/min in production, 300/min in dev).
 
-    Login --> Bcrypt --> JWT --> Token --> Client
-    Client --> Request -->|"Authorization: Bearer"| Verify --> Handler
-```
+## API Key Storage
 
-- **Password hashing:** bcrypt with 12 salt rounds (`auth/hash.ts`)
-- **JWT tokens:** Signed with `JWT_SECRET`, 7-day expiry, payload is `{ id, email }`
-- **Token refresh:** `POST /api/auth/refresh` issues a new token from the existing one
-- **Per-user data isolation:** All database queries filter by `req.user.id`.
-  Agent pods are per-user with workspace PVCs.
-
-## API Key Encryption
-
-User-provided LLM API keys are encrypted before storage:
+User API keys are encrypted at rest using **AES-256-GCM**:
 
 ```mermaid
 graph LR
-    Key["User's API key"]
-    SHA["SHA-256(ENCRYPTION_KEY)"]
-    AES["AES-256-GCM encrypt"]
-    Store["SQLite api_keys table<br/><small>iv:authTag:ciphertext (hex)</small>"]
-    Load["On session creation"]
-    Decrypt["AES-256-GCM decrypt"]
-    AuthStorage["Pi SDK AuthStorage"]
-
-    Key --> AES
-    SHA --> AES
-    AES --> Store
-    Store --> Load --> Decrypt --> AuthStorage
+    User["User enters API key"] -->|"HTTPS"| Server["Express Server"]
+    Server -->|"encrypt(key)"| DB["SQLite<br/>iv:authTag:ciphertext"]
+    DB -->|"decrypt(row)"| Pod["Agent Pod env var<br/>ANTHROPIC_API_KEY=sk-..."]
 ```
 
-Implementation in `server/src/crypto.ts`:
-- Key derived from `ENCRYPTION_KEY` env var via `SHA-256`
-- Random 16-byte IV per encryption
-- Stored as `hex(iv):hex(authTag):hex(ciphertext)`
-- Decrypted and passed to agent pods as environment variables
+- Encryption key derived from `ENCRYPTION_KEY` config via SHA-256
+- Each key has a unique 16-byte IV
+- Authentication tag prevents tampering
+- Keys are decrypted only when creating/restarting a user's pod
 
-## Path Traversal Prevention
+No server-level API keys — users always bring their own.
 
-`server/src/agent/workspace-guard.ts` validates file paths:
+## Container Isolation
 
-```ts
-function validateWorkspacePath(basePath: string, requestedPath: string): string {
-  const resolved = resolve(basePath, requestedPath);
-  if (!resolved.startsWith(basePath)) {
-    throw new Error('Path traversal detected');
-  }
-  return resolved;
-}
+Each user runs in their own k8s pod with:
+
+| Control | Setting |
+|---------|---------|
+| Non-root | `runAsUser: 1000`, `runAsGroup: 1000` |
+| No privilege escalation | `allowPrivilegeEscalation: false` |
+| Dropped capabilities | `capabilities: { drop: ['ALL'] }` |
+| Filesystem isolation | Each user's home is a separate hostPath |
+| No service account | `automountServiceAccountToken: false` |
+
+The init container runs as root solely to `chown` the hostPath directory for uid 1000. The main container cannot escalate.
+
+## Path Traversal Protection
+
+File operations go through k8s exec — the web app never touches the user's filesystem directly. The exec commands use sanitised filenames:
+
+```typescript
+const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
 ```
 
-File names are sanitized on upload:
-```ts
-const safeName = basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
+## Network
+
+Currently no network policies are enforced in dev. Production should restrict agent pods to:
+- DNS resolution (kube-dns)
+- External HTTPS (model provider APIs)
+- Nothing else (no inter-pod, no internal services)
+
+## Secrets Management
+
+Dev secrets are generated inline by the Tiltfile — no manual `kubectl create secret` needed. Production secrets must be created out-of-band:
+
+```bash
+kubectl create secret generic app-secrets \
+  --from-literal=jwt-secret=$(openssl rand -hex 32) \
+  --from-literal=encryption-key=$(openssl rand -hex 32) \
+  -n goldilocks
 ```
-
-Used in `files/routes.ts`, `quickgen/routes.ts`, and `structures/routes.ts`.
-
-## Rate Limiting
-
-Applied in `server/src/index.ts` via `express-rate-limit`:
-
-| Scope | Window | Max Requests |
-|-------|--------|-------------|
-| Global (`/api/*`) | 1 minute | 60 (prod) / 300 (dev) |
-| Auth (`/api/auth/*`) | 15 minutes | 20 |
-
-## Agent Pod Sandboxing
-
-Every agent session runs in its own k8s pod with full isolation:
-
-```mermaid
-graph TB
-    subgraph "k8s Cluster"
-        Express["Web App Pod<br/><small>Express + React</small>"]
-
-        subgraph "Agent Pod 1"
-            A1["Pi SDK + MCP client<br/><small>read-only rootfs<br/>512Mi mem / 500m CPU<br/>cap-drop ALL<br/>runAsNonRoot</small>"]
-            PVC1["PVC: workspace-user1"]
-        end
-
-        subgraph "Agent Pod 2"
-            A2["Pi SDK + MCP client<br/><small>read-only rootfs<br/>512Mi mem / 500m CPU<br/>cap-drop ALL<br/>runAsNonRoot</small>"]
-            PVC2["PVC: workspace-user2"]
-        end
-
-        Express -->|"WS proxy"| A1
-        Express -->|"WS proxy"| A2
-        A1 --> PVC1
-        A2 --> PVC2
-    end
-```
-
-### Pod Security
-
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| `runAsNonRoot` | `true` | No root processes |
-| `runAsUser` | `1000` | Unprivileged user |
-| `readOnlyRootFilesystem` | `true` | Immutable container |
-| `allowPrivilegeEscalation` | `false` | No setuid/setgid |
-| `capabilities.drop` | `["ALL"]` | No Linux capabilities |
-| `automountServiceAccountToken` | `false` | No k8s API access |
-
-### Network Isolation
-
-NetworkPolicy restricts agent pod traffic:
-- **Ingress:** Only from web-app pods (port 8080)
-- **Egress:** Only DNS (kube-dns) + MCP server (port 3100) + web app (port 3000)
-- **No internet access** for agent pods
-
-### Resource Limits
-
-Per-pod: 500m CPU, 512Mi memory, 256Mi scratch tmpfs
-Per-namespace: 50 pods, 12 CPU requests, 12Gi memory requests (ResourceQuota)
-
-## Known Limitations
-
-1. **Workspace guard is convention-based.** `resolve()` + `startsWith()` catches
-   `../` traversal but doesn't prevent symlink escapes. Agent pods provide real
-   filesystem isolation via k8s.
-
-2. **CORS is permissive in development.** `cors()` with no options allows all
-   origins. Production restricts to `CORS_ORIGIN` env var.
-
-3. **No CSRF protection.** The API relies entirely on Bearer tokens. Fine for
-   API-only clients, but could be a concern if cookies are ever added.
-
-4. **Chat history is client-side only.** Messages in `localStorage` are not
-   synced to the server. Clearing browser data loses history. The `conversations`
-   table stores metadata only.
-
-5. **JWT tokens have no revocation.** Tokens are valid for 7 days. There's no
-   server-side revocation list. Logout only clears the client-side token.

@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Paperclip, Sparkles, Square, Loader2 } from 'lucide-react';
 import { useChatStore } from '../../store/chat';
 import { useConversationsStore } from '../../store/conversations';
-import { useAuthStore } from '../../store/auth';
 import { useFilesStore } from '../../store/files';
 import { useAgent } from '../../hooks/useAgent';
 import { ChatSkeleton } from '../ui/Skeleton';
@@ -19,38 +18,21 @@ export default function ChatPanel() {
   
   const { messages, isStreaming, currentText, currentThinking, activeTools } = useChatStore();
   const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const { send, abort, isReady, error } = useAgent(activeConversationId);
+  const { send, abort, isReady, status, error } = useAgent(activeConversationId);
 
   const handleFileAttach = useCallback(async (files: FileList | null) => {
-    if (!files || !activeConversationId) return;
-    const token = useAuthStore.getState().token;
+    if (!files) return;
+    const filesStore = useFilesStore.getState();
     for (const file of Array.from(files)) {
       try {
-        // Read as base64 and upload
-        const content = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve((reader.result as string).split(',')[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-        await fetch(`/api/conversations/${activeConversationId}/upload`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ filename: file.name, content }),
-        });
-        // Mention the file in the chat
+        await filesStore.upload(file);
+        // Mention the file in the chat so pi knows about it
         send(`I've uploaded ${file.name}`);
       } catch (err) {
         console.error('Upload failed:', err);
       }
     }
-    // Refresh files list
-    const filesStore = useFilesStore.getState();
-    filesStore.fetch(activeConversationId);
-  }, [activeConversationId, send]);
+  }, [send]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -76,7 +58,15 @@ export default function ChatPanel() {
           </div>
         ) : !isReady && !hasMessages ? (
           <div className="p-4">
-            <ChatSkeleton />
+            {status === 'opening' ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+                <p className="text-slate-400 text-sm">Starting your agent pod...</p>
+                <p className="text-slate-500 text-xs">This may take a moment on first use</p>
+              </div>
+            ) : (
+              <ChatSkeleton />
+            )}
           </div>
         ) : !hasMessages ? (
           <WelcomeMessage onSend={send} isReady={isReady} />
@@ -152,7 +142,9 @@ export default function ChatPanel() {
                   ? "Create or select a conversation first..." 
                   : isReady 
                     ? "Ask about DFT calculations or upload a structure..." 
-                    : "Connecting..."
+                    : status === 'opening'
+                      ? "Starting agent pod..."
+                      : "Connecting..."
               }
               disabled={!isReady || !activeConversationId}
               className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent resize-none disabled:opacity-50"

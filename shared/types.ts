@@ -23,7 +23,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: 'auth_ok'; userId: string }
   | { type: 'auth_fail'; error: string }
-  | { type: 'ready'; conversationId: string }
+  | { type: 'ready'; conversationId: string; messages?: HistoryMessage[] }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
   | { type: 'tool_start'; toolName: string; toolCallId: string; args: unknown }
@@ -32,3 +32,16 @@ export type ServerMessage =
   | { type: 'message_end' }
   | { type: 'agent_end' }
   | { type: 'error'; error: string };
+
+/** A message from pi's session history. */
+export interface HistoryMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  toolCalls?: Array<{
+    toolCallId: string;
+    toolName: string;
+    args: unknown;
+    result?: string;
+    isError?: boolean;
+  }>;
+}

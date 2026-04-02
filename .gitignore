@@ -40,5 +40,5 @@ server/data/
 *.bak
 *.tmp
 
-# Agents
+# Agent infrastructure
 .pi/

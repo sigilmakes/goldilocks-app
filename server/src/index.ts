@@ -16,7 +16,7 @@ import settingsRoutes from './settings/routes.js';
 import structureRoutes, { libraryRouter } from './structures/routes.js';
 import quickgenRoutes from './quickgen/routes.js';
 import { setupWebSocket } from './agent/websocket.js';
-import { sessionCache } from './agent/sessions.js';
+import { sessionManager } from './agent/sessions.js';
 
 const app = express();
 const server = createServer(app);
@@ -65,8 +65,8 @@ app.use('/api/auth', authRoutes);
 // Conversation routes
 app.use('/api/conversations', conversationRoutes);
 
-// File routes (nested under conversations)
-app.use('/api/conversations', fileRoutes);
+// File routes (user workspace on PVC)
+app.use('/api/files', fileRoutes);
 
 // Model routes
 app.use('/api/models', modelRoutes);
@@ -80,6 +80,8 @@ app.use('/api/library', libraryRouter);
 
 // Quick generation routes (predict, generate)
 app.use('/api', quickgenRoutes);
+
+
 
 // Static file serving for frontend
 const frontendDist = resolve(process.cwd(), 'frontend', 'dist');
@@ -99,7 +101,7 @@ if (existsSync(frontendDist)) {
 // Graceful shutdown
 function shutdown() {
   console.log('\nShutting down...');
-  sessionCache.shutdown();
+  sessionManager.shutdown();
   closeDb();
   server.close(() => {
     console.log('Server closed');

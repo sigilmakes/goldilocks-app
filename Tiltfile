@@ -2,13 +2,34 @@
 
 update_settings(suppress_unused_image_warnings=['goldilocks-agent'])
 
+# ── Dev Secrets ──
+# Generate deterministic dev secrets so `tilt up` works with zero manual steps.
+# Production uses real secrets created out-of-band.
+k8s_yaml(blob("""
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: goldilocks
+type: Opaque
+stringData:
+  jwt-secret: dev-jwt-secret-not-for-production
+  encryption-key: dev-encryption-key-not-for-prod
+"""))
+
+# ── k8s Infrastructure ──
+k8s_yaml([
+    'k8s/namespace.yaml',
+    'k8s/rbac.yaml',
+])
+
 # ── Web App ──
 docker_build(
     'goldilocks-web',
     '.',
     dockerfile='deploy/docker/Dockerfile.web.dev',
     live_update=[
-        # Deps: full rebuild when package files change (must be first)
+        # Deps: full rebuild when package files change
         fall_back_on([
             './package.json',
             './server/package.json',
@@ -24,9 +45,8 @@ docker_build(
         # Server: sync source, tsx watch auto-restarts
         sync('./server/src', '/app/server/src'),
 
-        # Skills and agent context
-        sync('./skills', '/app/skills'),
-        sync('./AGENTS.md', '/app/AGENTS.md'),
+        # Shared types
+        sync('./shared', '/app/shared'),
     ],
 )
 
@@ -39,18 +59,11 @@ k8s_resource(
 
 # ── Agent Image ──
 # Not deployed as a k8s resource — web app creates agent pods dynamically.
-# Tilt just builds the image so it's available in kind.
-docker_build(
-    'goldilocks-agent',
-    '.',
-    dockerfile='deploy/docker/Dockerfile.agent',
+# docker_build alone won't load into kind (no k8s resource references it),
+# so we use local_resource to build + explicitly load into kind.
+local_resource(
+    'agent-image',
+    'docker build -t goldilocks-agent:latest -f deploy/docker/Dockerfile.agent . && kind load docker-image goldilocks-agent:latest --name goldilocks',
+    deps=['deploy/docker/Dockerfile.agent'],
+    labels=['build'],
 )
-
-# ── k8s Infrastructure ──
-# These are applied once and rarely change.
-k8s_yaml([
-    'k8s/namespace.yaml',
-    'k8s/rbac.yaml',
-    'k8s/network-policies.yaml',
-    'k8s/resource-quota.yaml',
-])
