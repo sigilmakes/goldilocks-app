@@ -18,7 +18,7 @@ export default function ChatPanel() {
   
   const { messages, isStreaming, currentText, currentThinking, activeTools } = useChatStore();
   const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const { send, abort, isReady, error } = useAgent(activeConversationId);
+  const { send, abort, isReady, status, error } = useAgent(activeConversationId);
 
   const handleFileAttach = useCallback(async (files: FileList | null) => {
     if (!files) return;
@@ -58,7 +58,15 @@ export default function ChatPanel() {
           </div>
         ) : !isReady && !hasMessages ? (
           <div className="p-4">
-            <ChatSkeleton />
+            {status === 'opening' ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+                <p className="text-slate-400 text-sm">Starting your agent pod...</p>
+                <p className="text-slate-500 text-xs">This may take a moment on first use</p>
+              </div>
+            ) : (
+              <ChatSkeleton />
+            )}
           </div>
         ) : !hasMessages ? (
           <WelcomeMessage onSend={send} isReady={isReady} />
@@ -134,7 +142,9 @@ export default function ChatPanel() {
                   ? "Create or select a conversation first..." 
                   : isReady 
                     ? "Ask about DFT calculations or upload a structure..." 
-                    : "Connecting..."
+                    : status === 'opening'
+                      ? "Starting agent pod..."
+                      : "Connecting..."
               }
               disabled={!isReady || !activeConversationId}
               className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent resize-none disabled:opacity-50"
