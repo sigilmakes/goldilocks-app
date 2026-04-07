@@ -361,7 +361,7 @@ function ApiKeyModal({
 
 function PreferencesSection() {
   const { defaultModel, defaultFunctional, updateSettings } = useSettingsStore();
-  const { models, fetch: fetchModels } = useModelsStore();
+  const { models, fetch: fetchModels, setSelected } = useModelsStore();
   const addToast = useToastStore((s) => s.addToast);
 
   useEffect(() => {
@@ -371,6 +371,9 @@ function PreferencesSection() {
   const handleModelChange = async (value: string) => {
     try {
       await updateSettings({ defaultModel: value });
+      if (value) {
+        await setSelected(value);
+      }
       addToast('Default model updated', 'success');
     } catch {
       addToast('Failed to update preferences', 'error');
