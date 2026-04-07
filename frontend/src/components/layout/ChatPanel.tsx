@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Paperclip, Sparkles, Square, Loader2, ArrowDown } from 'lucide-react';
+import { Send, Paperclip, Sparkles, Square, Loader2 } from 'lucide-react';
 import { useChatStore } from '../../store/chat';
 import { useFilesStore } from '../../store/files';
 import { useAgent } from '../../hooks/useAgent';
@@ -64,13 +64,6 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
     setMessage('');
   };
 
-  const handleScrollToLatest = () => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    setStickToBottom(true);
-    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-  };
-
   const hasMessages = messages.length > 0 || isStreaming;
 
   return (
@@ -78,11 +71,6 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
       <div
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto overflow-x-hidden p-4 min-h-0 min-w-0"
-        onWheelCapture={(event) => {
-          if (event.deltaY < 0) {
-            setStickToBottom(false);
-          }
-        }}
         onScroll={(event) => {
           const target = event.currentTarget;
           const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
@@ -142,18 +130,6 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
           </div>
         )}
       </div>
-
-      {!stickToBottom && hasMessages && (
-        <div className="absolute bottom-24 right-6 z-10">
-          <button
-            onClick={handleScrollToLatest}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-slate-600 bg-slate-800/95 hover:bg-slate-700 text-slate-200 shadow-lg transition-colors"
-          >
-            <ArrowDown className="w-4 h-4 text-amber-500" />
-            Latest
-          </button>
-        </div>
-      )}
 
       <div className="border-t border-slate-700 p-2 sm:p-4">
         <div className="max-w-3xl mx-auto flex items-end gap-1 sm:gap-2">
