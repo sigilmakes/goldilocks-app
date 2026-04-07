@@ -262,7 +262,9 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
           <PdfViewer path={path} />
         ) : viewerType === 'markdown' && editMode ? (
           <MilkdownEditor
-            value={editedContent ?? ''}
+            key={`${path}:milkdown`}
+            editorKey={path}
+            initialValue={editedContent ?? content ?? ''}
             onChange={(nextValue) => {
               setEditedContent(nextValue);
               setSaveStatus(nextValue === content ? 'clean' : 'dirty');

@@ -9,30 +9,30 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export default function PdfViewer({ path }: { path: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
+  const renderGenerationRef = useRef(0);
   const defaultZoom = useSettingsStore((s) => s.workspaceViewer.pdfDefaultZoom);
   const theme = useSettingsStore((s) => s.theme);
   const [pageCount, setPageCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [scale, setScale] = useState(defaultZoom / 100);
+  const [documentReady, setDocumentReady] = useState(false);
 
   useEffect(() => {
     setScale(defaultZoom / 100);
   }, [defaultZoom, path]);
 
   useEffect(() => {
-    const host = containerRef.current;
-    if (!host) return;
-    const container = host;
-
-    container.innerHTML = '';
+    let cancelled = false;
     setError(null);
     setLoading(true);
     setPageCount(0);
+    setDocumentReady(false);
+    pdfRef.current?.destroy();
+    pdfRef.current = null;
 
-    let cancelled = false;
-
-    async function renderPdf() {
+    async function loadPdf() {
       try {
         const response = await fetch(rawFileUrl(path), { headers: getAuthHeaders() });
         if (!response.ok) {
@@ -41,43 +41,68 @@ export default function PdfViewer({ path }: { path: string }) {
 
         const bytes = new Uint8Array(await response.arrayBuffer());
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-        if (cancelled) return;
-
-        setPageCount(pdf.numPages);
-        setLoading(false);
-
-        for (let index = 1; index <= pdf.numPages; index += 1) {
-          if (cancelled) return;
-          const page = await pdf.getPage(index);
-          const viewport = page.getViewport({ scale });
-
-          const canvas = document.createElement('canvas');
-          canvas.className = 'pdf-page-canvas';
-          const dpr = window.devicePixelRatio || 1;
-          canvas.width = Math.floor(viewport.width * dpr);
-          canvas.height = Math.floor(viewport.height * dpr);
-          canvas.style.width = `${Math.floor(viewport.width)}px`;
-          canvas.style.height = `${Math.floor(viewport.height)}px`;
-          container.appendChild(canvas);
-
-          const ctx = canvas.getContext('2d');
-          if (!ctx) continue;
-          ctx.scale(dpr, dpr);
-          await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+        if (cancelled) {
+          await pdf.destroy();
+          return;
         }
+
+        pdfRef.current = pdf;
+        setPageCount(pdf.numPages);
+        setDocumentReady(true);
+        setLoading(false);
       } catch (err) {
         if (cancelled) return;
-        console.error('[PDF] Render error:', err);
+        console.error('[PDF] Load error:', err);
         setError(err instanceof Error ? err.message : 'Failed to load PDF');
         setLoading(false);
       }
     }
 
-    void renderPdf();
+    void loadPdf();
     return () => {
       cancelled = true;
+      pdfRef.current?.destroy();
+      pdfRef.current = null;
     };
-  }, [path, scale]);
+  }, [path]);
+
+  useEffect(() => {
+    const host = containerRef.current;
+    const loadedPdf = pdfRef.current;
+    if (!host || !loadedPdf || !documentReady) return;
+    const container = host;
+    const pdf = loadedPdf;
+
+    container.innerHTML = '';
+    const generation = renderGenerationRef.current + 1;
+    renderGenerationRef.current = generation;
+
+    async function renderPdf() {
+      for (let index = 1; index <= pdf.numPages; index += 1) {
+        if (renderGenerationRef.current !== generation) return;
+
+        const page = await pdf.getPage(index);
+        if (renderGenerationRef.current !== generation) return;
+
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.className = 'pdf-page-canvas';
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
+        container.appendChild(canvas);
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) continue;
+        ctx.scale(dpr, dpr);
+        await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+      }
+    }
+
+    void renderPdf();
+  }, [documentReady, scale]);
 
   return (
     <div className="h-full flex flex-col min-h-0 bg-slate-900/30">
