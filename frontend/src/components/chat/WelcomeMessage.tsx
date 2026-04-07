@@ -208,7 +208,7 @@ export default function WelcomeMessage({ onSend, isReady }: { onSend: (text: str
                 />
               </label>
 
-              <div className="grid gap-3">
+              <div className="space-y-2">
                 {STRUCTURE_TEMPLATE_IDS.map((templateId) => {
                   const template = getPromptTemplate(templateId);
                   const Icon = templateIcon(templateId);
@@ -217,11 +217,15 @@ export default function WelcomeMessage({ onSend, isReady }: { onSend: (text: str
                       key={template.id}
                       onClick={() => handleStructurePrompt(templateId)}
                       disabled={!isReady || !selectedStructure}
-                      className="rounded-lg border border-slate-600 bg-slate-900/60 hover:bg-slate-700 px-4 py-3 text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full rounded-lg border border-slate-600 bg-slate-900/60 hover:bg-slate-700 px-3 py-3 text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Icon className="w-4 h-4 text-amber-500 mb-2" />
-                      <div className="text-sm font-medium text-white mb-1.5">{template.label}</div>
-                      <div className="text-sm text-slate-400 leading-relaxed">{template.description}</div>
+                      <div className="flex items-start gap-3">
+                        <Icon className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <div className="text-sm font-medium text-white mb-1">{template.label}</div>
+                          <div className="text-xs text-slate-400 leading-relaxed">{template.description}</div>
+                        </div>
+                      </div>
                     </button>
                   );
                 })}
