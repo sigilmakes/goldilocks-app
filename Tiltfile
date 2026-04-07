@@ -21,6 +21,8 @@ stringData:
 k8s_yaml([
     'k8s/namespace.yaml',
     'k8s/rbac.yaml',
+    'dashboard/k8s/headlamp-rbac.yaml',
+    'dashboard/k8s/headlamp.yaml',
 ])
 
 # ── Web App ──
@@ -55,6 +57,23 @@ k8s_resource(
     'web-app',
     port_forwards=['3000:3000', '5173:5173'],
     labels=['app'],
+)
+
+k8s_resource(
+    'headlamp',
+    port_forwards=['8080:4466'],
+    labels=['ops'],
+)
+
+local_resource(
+    'headlamp-token',
+    './dashboard/scripts/generate-headlamp-token.sh',
+    deps=[
+        'dashboard/scripts/generate-headlamp-token.sh',
+        'dashboard/k8s/headlamp-rbac.yaml',
+    ],
+    resource_deps=['headlamp'],
+    labels=['ops'],
 )
 
 # ── Agent Image ──

@@ -39,6 +39,7 @@ server/data/
 # Misc
 *.bak
 *.tmp
+.dev/
 
 # Agent infrastructure
 .pi/

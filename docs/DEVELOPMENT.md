@@ -31,9 +31,10 @@ npm run dev:setup
 tilt up
 
 # 4. Open browser
-#    Frontend: http://localhost:5173
-#    API:      http://localhost:3000
-#    Tilt UI:  http://localhost:10350
+#    Frontend:  http://localhost:5173
+#    API:       http://localhost:3000
+#    Headlamp:  http://localhost:8080
+#    Tilt UI:   http://localhost:10350
 ```
 
 ## Dev Workflow
@@ -60,6 +61,8 @@ Tilt watches for file changes and live-syncs them into the running container. Th
 | `package.json` / `package-lock.json` | Full image rebuild |
 | `deploy/docker/Dockerfile.agent` | Agent image rebuild + kind load |
 | `k8s/*.yaml` | Re-applied to cluster |
+| `dashboard/k8s/*.yaml` | Re-applied to cluster |
+| `dashboard/scripts/*.sh` | Re-runs dashboard helper resources |
 
 ### First-time setup
 
@@ -83,6 +86,31 @@ tilt up
 
 ## Debugging
 
+### Headlamp dashboard
+
+Tilt port-forwards Headlamp to `http://localhost:8080` and generates a dev login token at `.dev/headlamp-token.txt`.
+
+```bash
+cat .dev/headlamp-token.txt
+```
+
+If the token expires or the file is missing, regenerate it through Tilt:
+
+```bash
+tilt trigger headlamp-token
+```
+
+Headlamp runs in-cluster with a dedicated `headlamp` service account scoped to the `goldilocks` namespace.
+
+What Headlamp can do in v1:
+- Read namespace resources (`pods`, `services`, `deployments`, `replicasets`, `events`)
+- View pod logs
+- Exec into pods
+- Delete pods
+- Read a small amount of cluster-scoped data (`nodes`, `namespaces`, and node metrics) so the stock overview page renders correctly
+
+It is intentionally **not** a general cluster-admin dashboard.
+
 ### Logs
 
 Server logs stream in the Tilt UI. For agent-specific logs:
@@ -93,7 +121,7 @@ cat data/logs/bridge-*.log
 cat data/logs/pod-manager.log
 
 # Agent pod logs (stderr from pi)
-kubectl logs -n goldilocks -l role=agent
+nix develop -c kubectl logs -n goldilocks -l role=agent
 ```
 
 ### Common Issues
@@ -150,6 +178,11 @@ ls data/homes/<userId>/.pi/agent/sessions/
 
 ```
 goldilocks-app/
+├── dashboard/
+│   ├── README.md                 # Dashboard backend overview + access notes
+│   └── k8s/
+│       ├── headlamp.yaml         # Headlamp deployment + ClusterIP service
+│       └── headlamp-rbac.yaml    # Dedicated ServiceAccount + namespace RBAC
 ├── server/src/
 │   ├── agent/
 │   │   ├── bridge.ts           # JSONL RPC to pi
@@ -177,7 +210,7 @@ goldilocks-app/
 │   │   └── science/            # StructureViewer, PredictionSummary
 │   └── pages/                  # Login, Workspace, Settings
 ├── shared/types.ts             # WebSocket protocol types
-├── k8s/                        # Kubernetes manifests
+├── k8s/                        # Core Kubernetes manifests for the app
 ├── deploy/
 │   ├── docker/                 # Dockerfiles
 │   └── kind-config.yaml        # Kind cluster config
