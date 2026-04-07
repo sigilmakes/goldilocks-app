@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Paperclip, Sparkles, Square, Loader2 } from 'lucide-react';
+import { Send, Paperclip, Sparkles, Square, Loader2, ArrowDown } from 'lucide-react';
 import { useChatStore } from '../../store/chat';
 import { useFilesStore } from '../../store/files';
 import { useAgent } from '../../hooks/useAgent';
@@ -13,9 +13,8 @@ import { useChatPromptStore } from '../../store/chatPrompt';
 
 export default function ChatPanel({ conversationId }: { conversationId: string | null }) {
   const [message, setMessage] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [stickToBottom, setStickToBottom] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const shouldAutoScrollRef = useRef(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { messages, isStreaming, currentText, currentThinking, activeTools } = useChatStore();
@@ -37,9 +36,18 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
   }, [send]);
 
   useEffect(() => {
-    if (!shouldAutoScrollRef.current) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
-  }, [messages, currentText, currentThinking, activeTools, isStreaming]);
+    setStickToBottom(true);
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!stickToBottom) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: isStreaming ? 'auto' : 'smooth',
+    });
+  }, [messages, currentText, currentThinking, activeTools, isStreaming, stickToBottom]);
 
   useEffect(() => {
     if (!pendingPrompt || pendingPrompt.conversationId !== conversationId) return;
@@ -51,21 +59,34 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
   const handleSend = () => {
     const text = message.trim();
     if (!text || !isReady || isStreaming) return;
+    setStickToBottom(true);
     send(text);
     setMessage('');
+  };
+
+  const handleScrollToLatest = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    setStickToBottom(true);
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   };
 
   const hasMessages = messages.length > 0 || isStreaming;
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col min-h-0 relative">
       <div
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto p-4 min-h-0"
+        onWheelCapture={(event) => {
+          if (event.deltaY < 0) {
+            setStickToBottom(false);
+          }
+        }}
         onScroll={(event) => {
           const target = event.currentTarget;
           const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
-          shouldAutoScrollRef.current = distanceFromBottom < 96;
+          setStickToBottom(distanceFromBottom < 64);
         }}
       >
         {!conversationId ? (
@@ -87,7 +108,7 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
         ) : !hasMessages ? (
           <WelcomeMessage onSend={send} isReady={isReady} />
         ) : (
-          <div className="space-y-4 max-w-3xl mx-auto">
+          <div className="space-y-4 max-w-3xl mx-auto pb-16">
             {messages.map((msg, i) => (
               <MessageBubble key={`${msg.timestamp}-${i}`} message={msg} />
             ))}
@@ -112,8 +133,6 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
                 </div>
               </div>
             )}
-
-            <div ref={messagesEndRef} />
           </div>
         )}
 
@@ -123,6 +142,18 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
           </div>
         )}
       </div>
+
+      {!stickToBottom && hasMessages && (
+        <div className="absolute bottom-24 right-6 z-10">
+          <button
+            onClick={handleScrollToLatest}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-slate-600 bg-slate-800/95 hover:bg-slate-700 text-slate-200 shadow-lg transition-colors"
+          >
+            <ArrowDown className="w-4 h-4 text-amber-500" />
+            Latest
+          </button>
+        </div>
+      )}
 
       <div className="border-t border-slate-700 p-2 sm:p-4">
         <div className="max-w-3xl mx-auto flex items-end gap-1 sm:gap-2">
