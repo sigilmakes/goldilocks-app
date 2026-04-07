@@ -1,5 +1,6 @@
 import ConversationSidebar from '../sidebar/ConversationSidebar';
 import WorkspaceSidebar from '../sidebar/WorkspaceSidebar';
+import { useSettingsStore } from '../../store/settings';
 
 export type SidebarMode = 'conversations' | 'workspace';
 
@@ -18,6 +19,11 @@ export default function SidebarHost({
   onOpenPath,
   onNavigate,
 }: SidebarHostProps) {
+  const theme = useSettingsStore((s) => s.theme);
+  const inactiveModeClass = theme === 'light'
+    ? 'text-[rgba(226,232,240,0.82)] hover:text-white'
+    : 'text-slate-400 hover:text-white';
+
   return (
     <div className="h-full flex flex-col min-h-0 bg-slate-800">
       <div className="p-3 border-b border-slate-700">
@@ -27,7 +33,7 @@ export default function SidebarHost({
             className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
               mode === 'conversations'
                 ? 'bg-slate-700 text-white'
-                : 'text-slate-300 hover:text-white'
+                : inactiveModeClass
             }`}
           >
             Conversations
@@ -37,7 +43,7 @@ export default function SidebarHost({
             className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
               mode === 'workspace'
                 ? 'bg-slate-700 text-white'
-                : 'text-slate-300 hover:text-white'
+                : inactiveModeClass
             }`}
           >
             Workspace
