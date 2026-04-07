@@ -3,9 +3,15 @@ import {
   ArrowLeft, Download, Edit3, Eye, Save,
 } from 'lucide-react';
 import { marked } from 'marked';
-import { fetchFile, putFile, rawFileUrl, getAuthHeaders, downloadWorkspaceFile } from '../../api/client';
+import { fetchFile, putFile, downloadWorkspaceFile } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import StructureViewer from '../science/StructureViewer';
+import { useSettingsStore } from '../../store/settings';
+import { getFileExtension, matchesConfiguredExtension } from '../../lib/fileAssociations';
+import MilkdownEditor from './MilkdownEditor';
+import MonacoEditor from './MonacoEditor';
+import PdfViewer from './PdfViewer';
+import ImageViewer from './ImageViewer';
 
 interface FileViewerProps {
   path: string;
@@ -13,21 +19,15 @@ interface FileViewerProps {
   showBackButton?: boolean;
 }
 
-// -- Helpers
-function getExt(name: string): string {
-  return name.split('.').pop()?.toLowerCase() ?? '';
-}
+const STRUCTURE_EXTS = new Set(['cif', 'poscar', 'vasp', 'xyz', 'pdb']);
 
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
-const CODE_EXTS = new Set(['ts', 'tsx', 'js', 'jsx', 'py', 'sh', 'in', 'out', 'txt', 'md', 'json', 'yaml', 'yml', 'toml', 'xml', 'rs', 'go', 'c', 'cpp', 'h']);
-const CIF_EXTS = new Set(['cif', 'poscar', 'vasp', 'xyz', 'pdb']);
-
-function getViewerType(name: string): 'cif' | 'image' | 'markdown' | 'code' | 'binary' {
-  const ext = getExt(name);
-  if (CIF_EXTS.has(ext)) return 'cif';
-  if (IMAGE_EXTS.has(ext)) return 'image';
+function getViewerType(path: string, monacoExtensions: string[], imageExtensions: string[]): 'cif' | 'pdf' | 'image' | 'markdown' | 'monaco' | 'binary' {
+  const ext = getFileExtension(path);
+  if (STRUCTURE_EXTS.has(ext)) return 'cif';
+  if (ext === 'pdf') return 'pdf';
   if (ext === 'md') return 'markdown';
-  if (CODE_EXTS.has(ext)) return 'code';
+  if (matchesConfiguredExtension(path, imageExtensions)) return 'image';
+  if (matchesConfiguredExtension(path, monacoExtensions)) return 'monaco';
   return 'binary';
 }
 
@@ -46,59 +46,11 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
   return <span className={`text-xs font-medium ${cls}`}>{text}</span>;
 }
 
-// -- Image viewer with auth blob URL
-function ImageViewer({ path }: { path: string }) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let revoked = false;
-    setLoading(true);
-
-    fetch(rawFileUrl(path), { headers: getAuthHeaders() })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.blob();
-      })
-      .then((blob) => {
-        if (revoked) return;
-        setBlobUrl(URL.createObjectURL(blob));
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!revoked) {
-          setBlobUrl(null);
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      revoked = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [path]);
-
-  if (loading) return <div className="text-sm text-slate-400 italic p-4">Loading image…</div>;
-  if (!blobUrl) return <div className="text-sm text-slate-400 italic p-4">Failed to load image</div>;
-
-  return (
-    <div className="flex items-center justify-center p-4 overflow-auto bg-slate-900/50">
-      <img
-        src={blobUrl}
-        alt={path.split('/').pop() ?? path}
-        className="max-w-full max-h-full rounded-lg border border-slate-600"
-      />
-    </div>
-  );
-}
-
-// -- Markdown viewer
 marked.setOptions({ breaks: true, gfm: true });
 
 function MarkdownViewer({ content }: { content: string }) {
   const html = useMemo(() => {
     try {
-      // Strip YAML frontmatter
       const stripped = content.replace(/^---\n[\s\S]*?\n---\n/, '');
       return marked.parse(stripped) as string;
     } catch {
@@ -107,7 +59,7 @@ function MarkdownViewer({ content }: { content: string }) {
   }, [content]);
 
   return (
-    <div className="p-4">
+    <div className="p-6 max-w-4xl mx-auto w-full">
       <div
         className="chat-markdown text-slate-200"
         dangerouslySetInnerHTML={{ __html: html }}
@@ -116,16 +68,6 @@ function MarkdownViewer({ content }: { content: string }) {
   );
 }
 
-// -- Code viewer
-function CodeViewer({ content }: { content: string }) {
-  return (
-    <pre className="p-4 font-mono text-sm text-slate-200 bg-slate-800 rounded-lg overflow-x-auto leading-relaxed whitespace-pre">
-      {content}
-    </pre>
-  );
-}
-
-// -- CIF viewer
 function CIFViewer({ content }: { content: string }) {
   return (
     <div className="p-4">
@@ -134,7 +76,6 @@ function CIFViewer({ content }: { content: string }) {
   );
 }
 
-// -- FileViewer
 export default function FileViewer({ path, onBack, showBackButton = true }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null);
   const [editedContent, setEditedContent] = useState<string | null>(null);
@@ -147,18 +88,27 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
   const editModeRef = useRef(editMode);
   const handleSaveRef = useRef<() => void>(() => {});
   const addToast = useToastStore((s) => s.addToast);
+  const workspaceViewer = useSettingsStore((s) => s.workspaceViewer);
 
-  const viewerType = getViewerType(path);
+  const viewerType = getViewerType(path, workspaceViewer.monacoExtensions, workspaceViewer.imageViewerExtensions);
 
-  // Load content
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    const requiresText = viewerType === 'cif' || viewerType === 'markdown' || viewerType === 'monaco';
+
+    setLoading(requiresText);
     setError(null);
     setEditMode(false);
     setSaveStatus('clean');
     setEditedContent(null);
     setContent(null);
+
+    if (!requiresText) {
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     fetchFile(path)
       .then((res) => {
@@ -174,13 +124,11 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
       });
 
     return () => { cancelled = true; };
-  }, [path]);
+  }, [path, viewerType]);
 
-  // Keep refs in sync
   useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
 
-  // beforeunload guard
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (saveStatusRef.current === 'dirty') e.preventDefault();
@@ -189,7 +137,6 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
 
-  // Ctrl+S
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -218,7 +165,6 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
     }
   }, [editedContent, path, saveStatus, addToast]);
 
-  // Expose handleSave via ref for Ctrl+S handler
   handleSaveRef.current = handleSave;
 
   const handleToggleEdit = () => {
@@ -238,11 +184,10 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
     }
   };
 
-  const canEdit = viewerType === 'code' || viewerType === 'markdown';
+  const canEdit = viewerType === 'monaco' || viewerType === 'markdown';
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
+    <div className="flex flex-col h-full min-h-0 min-w-0">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-700 flex-shrink-0">
         {showBackButton && onBack && (
           <>
@@ -267,7 +212,7 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
 
           {editMode && saveStatus === 'dirty' && (
             <button
-              onClick={handleSave}
+              onClick={() => void handleSave()}
               className="flex items-center gap-1 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium rounded-lg transition-colors"
             >
               <Save className="w-3.5 h-3.5" />
@@ -293,7 +238,7 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
           )}
 
           <button
-            onClick={handleDownload}
+            onClick={() => void handleDownload()}
             className="flex items-center gap-1 px-2.5 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
             title="Download"
           >
@@ -302,8 +247,7 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto min-h-0 min-w-0">
         {loading ? (
           <div className="flex items-center justify-center h-full text-slate-400 italic text-sm">
             Loading…
@@ -312,29 +256,36 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
           <div className="flex items-center justify-center h-full text-red-400 text-sm">
             {error}
           </div>
-        ) : editMode && canEdit ? (
-          <textarea
-            value={editedContent ?? ''}
-            onChange={(e) => {
-              setEditedContent(e.target.value);
-              setSaveStatus('dirty');
-            }}
-            className="w-full h-full p-4 bg-slate-800 text-slate-200 font-mono text-sm resize-none focus:outline-none leading-relaxed"
-            spellCheck={false}
-          />
         ) : viewerType === 'image' ? (
           <ImageViewer path={path} />
+        ) : viewerType === 'pdf' ? (
+          <PdfViewer path={path} />
+        ) : viewerType === 'markdown' && editMode ? (
+          <MilkdownEditor
+            value={editedContent ?? ''}
+            onChange={(nextValue) => {
+              setEditedContent(nextValue);
+              setSaveStatus(nextValue === content ? 'clean' : 'dirty');
+            }}
+          />
         ) : viewerType === 'markdown' ? (
           <MarkdownViewer content={content ?? ''} />
         ) : viewerType === 'cif' ? (
           <CIFViewer content={content ?? ''} />
-        ) : viewerType === 'code' ? (
-          <div className="p-4 overflow-x-auto">
-            <CodeViewer content={content ?? ''} />
-          </div>
+        ) : viewerType === 'monaco' ? (
+          <MonacoEditor
+            path={path}
+            value={editMode ? (editedContent ?? '') : (content ?? '')}
+            readOnly={!editMode}
+            onChange={(nextValue) => {
+              setEditedContent(nextValue);
+              setSaveStatus(nextValue === content ? 'clean' : 'dirty');
+            }}
+            onSave={() => void handleSave()}
+          />
         ) : (
-          <div className="flex items-center justify-center h-full text-slate-400 italic text-sm">
-            Binary file — cannot preview
+          <div className="flex items-center justify-center h-full text-slate-400 italic text-sm px-6 text-center">
+            No viewer configured for this file type yet.
           </div>
         )}
       </div>

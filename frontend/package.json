@@ -13,6 +13,7 @@
   "dependencies": {
     "@milkdown/kit": "^7.20.0",
     "@milkdown/react": "^7.20.0",
+    "@monaco-editor/react": "^4.7.0",
     "@prosemirror-adapter/react": "^0.5.3",
     "3dmol": "^2.5.4",
     "clsx": "^2.1.1",

@@ -67,3 +67,63 @@ export function matchesConfiguredExtension(path: string, extensions: string[]): 
   const extension = getFileExtension(path);
   return normalizeExtensions(extensions).includes(extension);
 }
+
+function isImageBackground(value: unknown): value is ImageBackground {
+  return value === 'checkered' || value === 'dark' || value === 'light';
+}
+
+function isImageFitMode(value: unknown): value is ImageFitMode {
+  return value === 'contain' || value === 'actual';
+}
+
+function isPdfDefaultZoom(value: unknown): value is PdfDefaultZoom {
+  return value === 50 || value === 75 || value === 100 || value === 125 || value === 150 || value === 200;
+}
+
+function isMonacoTabSize(value: unknown): value is 2 | 4 | 8 {
+  return value === 2 || value === 4 || value === 8;
+}
+
+function clampFontSize(value: unknown): number {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoFontSize;
+  return Math.min(24, Math.max(10, Math.round(numeric)));
+}
+
+export function normalizeWorkspaceViewerSettings(
+  value?: Partial<WorkspaceViewerSettings>
+): WorkspaceViewerSettings {
+  const requestedImageExtensions = normalizeExtensions(
+    value?.imageViewerExtensions ?? DEFAULT_WORKSPACE_VIEWER_SETTINGS.imageViewerExtensions
+  );
+  const requestedMonacoExtensions = normalizeExtensions(
+    value?.monacoExtensions ?? DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoExtensions
+  ).filter((extension) => !requestedImageExtensions.includes(extension));
+
+  return {
+    monacoExtensions: requestedMonacoExtensions,
+    imageViewerExtensions: requestedImageExtensions,
+    imageBackground: isImageBackground(value?.imageBackground)
+      ? value.imageBackground
+      : DEFAULT_WORKSPACE_VIEWER_SETTINGS.imageBackground,
+    imageFitMode: isImageFitMode(value?.imageFitMode)
+      ? value.imageFitMode
+      : DEFAULT_WORKSPACE_VIEWER_SETTINGS.imageFitMode,
+    pdfDefaultZoom: isPdfDefaultZoom(value?.pdfDefaultZoom)
+      ? value.pdfDefaultZoom
+      : DEFAULT_WORKSPACE_VIEWER_SETTINGS.pdfDefaultZoom,
+    monacoFontSize: clampFontSize(value?.monacoFontSize),
+    monacoTabSize: isMonacoTabSize(value?.monacoTabSize)
+      ? value.monacoTabSize
+      : DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoTabSize,
+    monacoWordWrap: typeof value?.monacoWordWrap === 'boolean'
+      ? value.monacoWordWrap
+      : DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoWordWrap,
+    monacoLineNumbers: typeof value?.monacoLineNumbers === 'boolean'
+      ? value.monacoLineNumbers
+      : DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoLineNumbers,
+    monacoMinimap: typeof value?.monacoMinimap === 'boolean'
+      ? value.monacoMinimap
+      : DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoMinimap,
+  };
+}

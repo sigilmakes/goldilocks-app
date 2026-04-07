@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { api } from '../api/client';
 import {
   DEFAULT_WORKSPACE_VIEWER_SETTINGS,
-  normalizeExtensions,
+  normalizeWorkspaceViewerSettings,
   type WorkspaceViewerSettings,
 } from '../lib/fileAssociations';
 
@@ -98,16 +98,10 @@ export const useSettingsStore = create<SettingsState>()(
 
       updateWorkspaceViewer: (settings) => {
         set((state) => ({
-          workspaceViewer: {
+          workspaceViewer: normalizeWorkspaceViewerSettings({
             ...state.workspaceViewer,
             ...settings,
-            monacoExtensions: settings.monacoExtensions
-              ? normalizeExtensions(settings.monacoExtensions)
-              : state.workspaceViewer.monacoExtensions,
-            imageViewerExtensions: settings.imageViewerExtensions
-              ? normalizeExtensions(settings.imageViewerExtensions)
-              : state.workspaceViewer.imageViewerExtensions,
-          },
+          }),
         }));
       },
 
@@ -163,16 +157,10 @@ export const useSettingsStore = create<SettingsState>()(
         return {
           ...current,
           ...typedPersisted,
-          workspaceViewer: {
+          workspaceViewer: normalizeWorkspaceViewerSettings({
             ...DEFAULT_WORKSPACE_VIEWER_SETTINGS,
             ...typedPersisted?.workspaceViewer,
-            monacoExtensions: normalizeExtensions(
-              typedPersisted?.workspaceViewer?.monacoExtensions ?? DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoExtensions
-            ),
-            imageViewerExtensions: normalizeExtensions(
-              typedPersisted?.workspaceViewer?.imageViewerExtensions ?? DEFAULT_WORKSPACE_VIEWER_SETTINGS.imageViewerExtensions
-            ),
-          },
+          }),
         } satisfies SettingsState;
       },
       onRehydrateStorage: () => (state) => {
