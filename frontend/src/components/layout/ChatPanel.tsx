@@ -9,14 +9,18 @@ import MessageBubble from '../chat/MessageBubble';
 import { ThinkingBlock } from '../chat/MessageBubble';
 import MarkdownContent from '../chat/MarkdownContent';
 import ToolCallCard from '../chat/ToolCallCard';
-import { SEND_CHAT_PROMPT_EVENT, type SendChatPromptDetail } from '../../lib/chatPrompt';
+import { useChatPromptStore } from '../../store/chatPrompt';
 
 export default function ChatPanel({ conversationId }: { conversationId: string | null }) {
   const [message, setMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { messages, isStreaming, currentText, currentThinking, activeTools } = useChatStore();
+  const pendingPrompt = useChatPromptStore((s) => s.pendingPrompt);
+  const consumePrompt = useChatPromptStore((s) => s.consumePrompt);
   const { send, abort, isReady, status, error } = useAgent(conversationId);
 
   const handleFileAttach = useCallback(async (files: FileList | null) => {
@@ -33,20 +37,16 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
   }, [send]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, currentText, currentThinking]);
+    if (!shouldAutoScrollRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
+  }, [messages, currentText, currentThinking, activeTools, isStreaming]);
 
   useEffect(() => {
-    const handler = (event: Event) => {
-      const custom = event as CustomEvent<SendChatPromptDetail>;
-      const text = custom.detail?.text?.trim();
-      if (!text || !isReady || !conversationId || isStreaming) return;
-      send(text);
-    };
-
-    window.addEventListener(SEND_CHAT_PROMPT_EVENT, handler);
-    return () => window.removeEventListener(SEND_CHAT_PROMPT_EVENT, handler);
-  }, [conversationId, isReady, isStreaming, send]);
+    if (!pendingPrompt || pendingPrompt.conversationId !== conversationId) return;
+    if (!isReady || isStreaming) return;
+    send(pendingPrompt.text);
+    consumePrompt();
+  }, [consumePrompt, conversationId, isReady, isStreaming, pendingPrompt, send]);
 
   const handleSend = () => {
     const text = message.trim();
@@ -59,7 +59,15 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="flex-1 overflow-y-auto p-4 min-h-0">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto p-4 min-h-0"
+        onScroll={(event) => {
+          const target = event.currentTarget;
+          const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+          shouldAutoScrollRef.current = distanceFromBottom < 96;
+        }}
+      >
         {!conversationId ? (
           <div className="h-full flex items-center justify-center">
             <p className="text-slate-400">Select or create a conversation to start</p>

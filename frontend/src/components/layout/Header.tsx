@@ -5,6 +5,7 @@ import { useSettingsStore, type ApiKeyInfo } from '../../store/settings';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ModelSelectorSkeleton } from '../ui/Skeleton';
+import GenerationDefaultsPopover from './GenerationDefaultsPopover';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -18,7 +19,7 @@ export default function Header({
   activeTabTitle,
 }: HeaderProps) {
   const { user, logout } = useAuthStore();
-  const { theme, setTheme, apiKeys, fetchApiKeys } = useSettingsStore();
+  const { theme, setTheme, apiKeys, fetchApiKeys, fetchSettings } = useSettingsStore();
   const navigate = useNavigate();
   const { models, selectedModel, isLoading, fetch, setSelected } = useModelsStore();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -28,7 +29,8 @@ export default function Header({
   useEffect(() => {
     fetch();
     fetchApiKeys();
-  }, [fetch, fetchApiKeys]);
+    fetchSettings();
+  }, [fetch, fetchApiKeys, fetchSettings]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -106,6 +108,8 @@ export default function Header({
         {selectedModelData && (
           <KeySourceBadge provider={selectedModelData.provider} apiKeys={apiKeys} />
         )}
+
+        <GenerationDefaultsPopover />
 
         {/* Theme toggle */}
         <button

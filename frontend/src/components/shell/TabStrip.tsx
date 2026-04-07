@@ -21,14 +21,14 @@ function TabIcon({ tab }: { tab: AppTab }) {
 export default function TabStrip({ tabs, activeTabId, onFocusTab, onCloseTab }: TabStripProps) {
   if (tabs.length === 0) {
     return (
-      <div className="h-11 border-b border-slate-700 bg-slate-850/60 px-4 flex items-center text-sm text-slate-500">
+      <div className="h-11 border-b border-slate-700 bg-slate-900/60 px-4 flex items-center text-sm text-slate-500">
         No tabs open
       </div>
     );
   }
 
   return (
-    <div className="h-11 border-b border-slate-700 bg-slate-850/60 overflow-x-auto">
+    <div className="h-11 border-b border-slate-700 bg-slate-900/60 overflow-x-auto">
       <div className="flex items-stretch min-w-max px-2 py-1 gap-1">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;

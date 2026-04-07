@@ -27,9 +27,16 @@
 
 /* Remap Tailwind slate palette in light mode */
 .light .bg-slate-900 { background-color: #ffffff; }
+.light .bg-slate-900\/60 { background-color: rgba(255, 255, 255, 0.6); }
+.light .bg-slate-900\/50 { background-color: rgba(248, 250, 252, 0.85); }
+.light .bg-slate-900\/40 { background-color: rgba(248, 250, 252, 0.75); }
 .light .bg-slate-800 { background-color: #f1f5f9; }
+.light .bg-slate-800\/70 { background-color: rgba(241, 245, 249, 0.92); }
+.light .bg-slate-800\/50 { background-color: rgba(241, 245, 249, 0.75); }
 .light .bg-slate-700 { background-color: #e2e8f0; }
+.light .bg-slate-700\/80 { background-color: rgba(226, 232, 240, 0.8); }
 .light .bg-slate-700\/50 { background-color: rgba(226, 232, 240, 0.5); }
+.light .bg-slate-700\/30 { background-color: rgba(226, 232, 240, 0.3); }
 .light .bg-slate-600 { background-color: #cbd5e1; }
 
 .light .text-white { color: #1e293b; }
@@ -39,6 +46,7 @@
 .light .text-slate-500 { color: #94a3b8; }
 
 .light .border-slate-700 { border-color: #e2e8f0; }
+.light .border-slate-700\/80 { border-color: rgba(226, 232, 240, 0.8); }
 .light .border-slate-600 { border-color: #cbd5e1; }
 
 .light .hover\:bg-slate-700:hover { background-color: #e2e8f0; }
