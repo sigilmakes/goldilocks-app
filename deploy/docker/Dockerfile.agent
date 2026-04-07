@@ -4,14 +4,16 @@
 
 FROM node:22-alpine
 
+RUN apk add --no-cache python3
+
 # Install Pi SDK
 WORKDIR /opt/pi
 RUN echo '{"type":"module","dependencies":{"@mariozechner/pi-coding-agent":"*"}}' > package.json \
     && npm install --omit=dev \
     && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
 
-# Verify pi is installed
-RUN pi --version
+# Verify pi and python3 are installed
+RUN pi --version && python3 --version
 
 # Set up home directory (will be overlaid by PVC in k8s)
 RUN mkdir -p /home/node && chown -R node:node /home/node
