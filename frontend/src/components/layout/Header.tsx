@@ -1,28 +1,25 @@
-import { PanelLeft, PanelRight, User, LogOut, Settings, Sun, Moon } from 'lucide-react';
+import { PanelLeft, User, LogOut, Settings, Sun, Moon } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useModelsStore } from '../../store/models';
 import { useSettingsStore, type ApiKeyInfo } from '../../store/settings';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ModelSelectorSkeleton } from '../ui/Skeleton';
+import GenerationDefaultsPopover from './GenerationDefaultsPopover';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
-  onToggleContext: () => void;
   sidebarOpen: boolean;
-  contextOpen: boolean;
-  isMobile?: boolean;
+  activeTabTitle?: string | null;
 }
 
 export default function Header({
   onToggleSidebar,
-  onToggleContext,
   sidebarOpen,
-  contextOpen,
-  isMobile: _isMobile = false,
+  activeTabTitle,
 }: HeaderProps) {
   const { user, logout } = useAuthStore();
-  const { theme, setTheme, apiKeys, fetchApiKeys } = useSettingsStore();
+  const { theme, setTheme, apiKeys, fetchApiKeys, fetchSettings } = useSettingsStore();
   const navigate = useNavigate();
   const { models, selectedModel, isLoading, fetch, setSelected } = useModelsStore();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -32,7 +29,8 @@ export default function Header({
   useEffect(() => {
     fetch();
     fetchApiKeys();
-  }, [fetch, fetchApiKeys]);
+    fetchSettings();
+  }, [fetch, fetchApiKeys, fetchSettings]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -61,13 +59,20 @@ export default function Header({
           <PanelLeft className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-amber-500 rounded-full flex items-center justify-center">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-8 h-8 bg-amber-500 rounded-full flex items-center justify-center flex-shrink-0">
             <div className="w-5 h-5 bg-amber-400 rounded-full flex items-center justify-center">
               <div className="w-2.5 h-2.5 bg-amber-300 rounded-full" />
             </div>
           </div>
-          <span className="font-semibold text-white hidden sm:inline">Goldilocks</span>
+          <div className="min-w-0">
+            <div className="font-semibold text-white hidden sm:block">Goldilocks</div>
+            {activeTabTitle && (
+              <div className="text-xs text-slate-400 truncate max-w-[220px] hidden lg:block">
+                {activeTabTitle}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -104,6 +109,8 @@ export default function Header({
           <KeySourceBadge provider={selectedModelData.provider} apiKeys={apiKeys} />
         )}
 
+        <GenerationDefaultsPopover />
+
         {/* Theme toggle */}
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -111,16 +118,6 @@ export default function Header({
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
           {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
-
-        <button
-          onClick={onToggleContext}
-          className={`p-2 rounded-lg hover:bg-slate-700 transition-colors ${
-            contextOpen ? 'text-amber-500' : 'text-slate-400'
-          }`}
-          title="Toggle context panel"
-        >
-          <PanelRight className="w-5 h-5" />
         </button>
 
         {/* User menu */}

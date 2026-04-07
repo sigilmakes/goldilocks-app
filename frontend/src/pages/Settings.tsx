@@ -7,6 +7,7 @@ import {
   SlidersHorizontal,
   Palette,
   Info,
+  FileCode2,
   Eye,
   EyeOff,
   Trash2,
@@ -21,13 +22,15 @@ import { useAuthStore } from '../store/auth';
 import { useSettingsStore, type ApiKeyInfo } from '../store/settings';
 import { useModelsStore } from '../store/models';
 import { useToastStore } from '../store/toast';
+import { formatExtensionList, parseExtensionList } from '../lib/fileAssociations';
 
-type Section = 'profile' | 'apikeys' | 'preferences' | 'appearance' | 'about';
+type Section = 'profile' | 'apikeys' | 'preferences' | 'workspace' | 'appearance' | 'about';
 
 const sections: { id: Section; label: string; icon: typeof User }[] = [
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'apikeys', label: 'API Keys', icon: Key },
   { id: 'preferences', label: 'Preferences', icon: SlidersHorizontal },
+  { id: 'workspace', label: 'Workspace', icon: FileCode2 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'about', label: 'About', icon: Info },
 ];
@@ -100,6 +103,7 @@ export default function Settings() {
             {activeSection === 'profile' && <ProfileSection />}
             {activeSection === 'apikeys' && <ApiKeysSection />}
             {activeSection === 'preferences' && <PreferencesSection />}
+            {activeSection === 'workspace' && <WorkspaceSection />}
             {activeSection === 'appearance' && <AppearanceSection />}
             {activeSection === 'about' && <AboutSection />}
           </div>
@@ -357,7 +361,7 @@ function ApiKeyModal({
 
 function PreferencesSection() {
   const { defaultModel, defaultFunctional, updateSettings } = useSettingsStore();
-  const { models, fetch: fetchModels } = useModelsStore();
+  const { models, fetch: fetchModels, setSelected } = useModelsStore();
   const addToast = useToastStore((s) => s.addToast);
 
   useEffect(() => {
@@ -367,6 +371,9 @@ function PreferencesSection() {
   const handleModelChange = async (value: string) => {
     try {
       await updateSettings({ defaultModel: value });
+      if (value) {
+        await setSelected(value);
+      }
       addToast('Default model updated', 'success');
     } catch {
       addToast('Failed to update preferences', 'error');
@@ -420,6 +427,205 @@ function PreferencesSection() {
         </div>
       </div>
     </SectionCard>
+  );
+}
+
+function WorkspaceSection() {
+  const { workspaceViewer, updateWorkspaceViewer } = useSettingsStore();
+  const [monacoExtensionsInput, setMonacoExtensionsInput] = useState(() => formatExtensionList(workspaceViewer.monacoExtensions));
+  const [imageExtensionsInput, setImageExtensionsInput] = useState(() => formatExtensionList(workspaceViewer.imageViewerExtensions));
+  const addToast = useToastStore((s) => s.addToast);
+
+  useEffect(() => {
+    setMonacoExtensionsInput(formatExtensionList(workspaceViewer.monacoExtensions));
+    setImageExtensionsInput(formatExtensionList(workspaceViewer.imageViewerExtensions));
+  }, [workspaceViewer.imageViewerExtensions, workspaceViewer.monacoExtensions]);
+
+  const applyExtensionSettings = () => {
+    updateWorkspaceViewer({
+      monacoExtensions: parseExtensionList(monacoExtensionsInput),
+      imageViewerExtensions: parseExtensionList(imageExtensionsInput),
+    });
+    addToast('Workspace viewer file types updated', 'success');
+  };
+
+  return (
+    <div className="space-y-6">
+      <SectionCard title="File associations">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Monaco file types
+            </label>
+            <input
+              type="text"
+              value={monacoExtensionsInput}
+              onChange={(e) => setMonacoExtensionsInput(e.target.value)}
+              placeholder="ts, tsx, js, py, json, txt, in, out"
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Comma-separated extensions. If an extension appears in both lists, the image viewer wins.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Image viewer file types
+            </label>
+            <input
+              type="text"
+              value={imageExtensionsInput}
+              onChange={(e) => setImageExtensionsInput(e.target.value)}
+              placeholder="png, jpg, jpeg, webp, svg"
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={applyExtensionSettings}
+              className="px-4 py-2 text-sm bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors"
+            >
+              Apply file types
+            </button>
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Monaco editor">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Font size
+            </label>
+            <input
+              type="range"
+              min={10}
+              max={24}
+              value={workspaceViewer.monacoFontSize}
+              onChange={(e) => updateWorkspaceViewer({ monacoFontSize: Number(e.target.value) })}
+              className="w-full"
+            />
+            <div className="text-xs text-slate-500 mt-1">{workspaceViewer.monacoFontSize}px</div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Tab size
+            </label>
+            <select
+              value={workspaceViewer.monacoTabSize}
+              onChange={(e) => updateWorkspaceViewer({ monacoTabSize: Number(e.target.value) as 2 | 4 | 8 })}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value={2}>2 spaces</option>
+              <option value={4}>4 spaces</option>
+              <option value={8}>8 spaces</option>
+            </select>
+          </div>
+
+          <div className="space-y-3">
+            <SettingsCheckbox
+              label="Word wrap"
+              description="Wrap long lines to fit the editor width."
+              checked={workspaceViewer.monacoWordWrap}
+              onChange={(checked) => updateWorkspaceViewer({ monacoWordWrap: checked })}
+            />
+            <SettingsCheckbox
+              label="Line numbers"
+              description="Show line numbers in the gutter."
+              checked={workspaceViewer.monacoLineNumbers}
+              onChange={(checked) => updateWorkspaceViewer({ monacoLineNumbers: checked })}
+            />
+            <SettingsCheckbox
+              label="Minimap"
+              description="Show the Monaco minimap on the right side."
+              checked={workspaceViewer.monacoMinimap}
+              onChange={(checked) => updateWorkspaceViewer({ monacoMinimap: checked })}
+            />
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Image and PDF viewers">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Transparent image background
+            </label>
+            <select
+              value={workspaceViewer.imageBackground}
+              onChange={(e) => updateWorkspaceViewer({ imageBackground: e.target.value as 'checkered' | 'dark' | 'light' })}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="checkered">Checkered</option>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Default image fit
+            </label>
+            <select
+              value={workspaceViewer.imageFitMode}
+              onChange={(e) => updateWorkspaceViewer({ imageFitMode: e.target.value as 'contain' | 'actual' })}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="contain">Fit to view</option>
+              <option value="actual">Actual size</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Default PDF zoom
+            </label>
+            <select
+              value={workspaceViewer.pdfDefaultZoom}
+              onChange={(e) => updateWorkspaceViewer({ pdfDefaultZoom: Number(e.target.value) as 50 | 75 | 100 | 125 | 150 | 200 })}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value={50}>50%</option>
+              <option value={75}>75%</option>
+              <option value={100}>100%</option>
+              <option value={125}>125%</option>
+              <option value={150}>150%</option>
+              <option value={200}>200%</option>
+            </select>
+          </div>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function SettingsCheckbox({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start justify-between gap-4 cursor-pointer">
+      <div>
+        <div className="text-sm font-medium text-white">{label}</div>
+        <div className="text-xs text-slate-500 mt-1">{description}</div>
+      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 rounded border-slate-600 bg-slate-700 text-amber-500 focus:ring-amber-500"
+      />
+    </label>
   );
 }
 

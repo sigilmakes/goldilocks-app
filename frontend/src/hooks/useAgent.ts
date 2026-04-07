@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAuthStore } from '../store/auth';
 import { useChatStore } from '../store/chat';
+import { useFilesStore } from '../store/files';
 import type { ServerMessage } from '../../../shared/types';
 
 export type AgentStatus = 'disconnected' | 'connecting' | 'authenticating' | 'opening' | 'ready';
@@ -13,6 +14,17 @@ export function useAgent(conversationId: string | null) {
 
   // Generation counter to detect stale connections after rapid switches
   const generationRef = useRef(0);
+  const refreshWorkspaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleWorkspaceRefresh = useCallback(() => {
+    if (refreshWorkspaceTimerRef.current) {
+      clearTimeout(refreshWorkspaceTimerRef.current);
+    }
+    refreshWorkspaceTimerRef.current = setTimeout(() => {
+      void useFilesStore.getState().fetch();
+      refreshWorkspaceTimerRef.current = null;
+    }, 250);
+  }, []);
 
   useEffect(() => {
     const generation = ++generationRef.current;
@@ -121,6 +133,9 @@ export function useAgent(conversationId: string | null) {
 
         case 'tool_end':
           store.endToolCall(msg.toolCallId, msg.result, msg.isError);
+          if (['write', 'edit', 'bash'].includes(msg.toolName)) {
+            scheduleWorkspaceRefresh();
+          }
           break;
 
         case 'message_end':
@@ -129,6 +144,7 @@ export function useAgent(conversationId: string | null) {
 
         case 'agent_end':
           store.endAgent();
+          scheduleWorkspaceRefresh();
           break;
 
         case 'error':
@@ -152,8 +168,12 @@ export function useAgent(conversationId: string | null) {
     return () => {
       socket.close();
       ws.current = null;
+      if (refreshWorkspaceTimerRef.current) {
+        clearTimeout(refreshWorkspaceTimerRef.current);
+        refreshWorkspaceTimerRef.current = null;
+      }
     };
-  }, [conversationId, token]);
+  }, [conversationId, token, scheduleWorkspaceRefresh]);
 
   const isReady = status === 'ready';
 

@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Paperclip, Sparkles, Square, Loader2 } from 'lucide-react';
 import { useChatStore } from '../../store/chat';
-import { useConversationsStore } from '../../store/conversations';
 import { useFilesStore } from '../../store/files';
 import { useAgent } from '../../hooks/useAgent';
 import { ChatSkeleton } from '../ui/Skeleton';
@@ -10,15 +9,18 @@ import MessageBubble from '../chat/MessageBubble';
 import { ThinkingBlock } from '../chat/MessageBubble';
 import MarkdownContent from '../chat/MarkdownContent';
 import ToolCallCard from '../chat/ToolCallCard';
+import { useChatPromptStore } from '../../store/chatPrompt';
 
-export default function ChatPanel() {
+export default function ChatPanel({ conversationId }: { conversationId: string | null }) {
   const [message, setMessage] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [stickToBottom, setStickToBottom] = useState(true);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   const { messages, isStreaming, currentText, currentThinking, activeTools } = useChatStore();
-  const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const { send, abort, isReady, status, error } = useAgent(activeConversationId);
+  const pendingPrompt = useChatPromptStore((s) => s.pendingPrompt);
+  const consumePrompt = useChatPromptStore((s) => s.consumePrompt);
+  const { send, abort, isReady, status, error } = useAgent(conversationId);
 
   const handleFileAttach = useCallback(async (files: FileList | null) => {
     if (!files) return;
@@ -26,7 +28,6 @@ export default function ChatPanel() {
     for (const file of Array.from(files)) {
       try {
         await filesStore.upload(file);
-        // Mention the file in the chat so pi knows about it
         send(`I've uploaded ${file.name}`);
       } catch (err) {
         console.error('Upload failed:', err);
@@ -34,14 +35,31 @@ export default function ChatPanel() {
     }
   }, [send]);
 
-  // Auto-scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, currentText, currentThinking]);
+    setStickToBottom(true);
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!stickToBottom) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: isStreaming ? 'auto' : 'smooth',
+    });
+  }, [messages, currentText, currentThinking, activeTools, isStreaming, stickToBottom]);
+
+  useEffect(() => {
+    if (!pendingPrompt || pendingPrompt.conversationId !== conversationId) return;
+    if (!isReady || isStreaming) return;
+    send(pendingPrompt.text);
+    consumePrompt();
+  }, [consumePrompt, conversationId, isReady, isStreaming, pendingPrompt, send]);
 
   const handleSend = () => {
     const text = message.trim();
     if (!text || !isReady || isStreaming) return;
+    setStickToBottom(true);
     send(text);
     setMessage('');
   };
@@ -49,10 +67,17 @@ export default function ChatPanel() {
   const hasMessages = messages.length > 0 || isStreaming;
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 min-h-0">
-        {!activeConversationId ? (
+    <div className="h-full flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden relative">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden p-4 min-h-0 min-w-0"
+        onScroll={(event) => {
+          const target = event.currentTarget;
+          const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+          setStickToBottom(distanceFromBottom < 64);
+        }}
+      >
+        {!conversationId ? (
           <div className="h-full flex items-center justify-center">
             <p className="text-slate-400">Select or create a conversation to start</p>
           </div>
@@ -71,24 +96,19 @@ export default function ChatPanel() {
         ) : !hasMessages ? (
           <WelcomeMessage onSend={send} isReady={isReady} />
         ) : (
-          <div className="space-y-4 max-w-3xl mx-auto">
+          <div className="space-y-4 max-w-3xl mx-auto pb-16">
             {messages.map((msg, i) => (
               <MessageBubble key={`${msg.timestamp}-${i}`} message={msg} />
             ))}
-            
-            {/* Streaming content */}
+
             {isStreaming && (
               <div className="flex gap-3">
                 <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
                   <Sparkles className="w-4 h-4 text-amber-500" />
                 </div>
                 <div className="flex-1 min-w-0 space-y-2">
-                  {currentThinking && (
-                    <ThinkingBlock content={currentThinking} />
-                  )}
-                  {currentText && (
-                    <MarkdownContent content={currentText} streaming />
-                  )}
+                  {currentThinking && <ThinkingBlock content={currentThinking} />}
+                  {currentText && <MarkdownContent content={currentText} streaming />}
                   {Array.from(activeTools.values()).map((tool) => (
                     <ToolCallCard key={tool.toolCallId} tool={tool} />
                   ))}
@@ -101,11 +121,9 @@ export default function ChatPanel() {
                 </div>
               </div>
             )}
-            
-            <div ref={messagesEndRef} />
           </div>
         )}
-        
+
         {error && (
           <div className="max-w-3xl mx-auto mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
             {error}
@@ -113,12 +131,11 @@ export default function ChatPanel() {
         )}
       </div>
 
-      {/* Input area */}
       <div className="border-t border-slate-700 p-2 sm:p-4">
         <div className="max-w-3xl mx-auto flex items-end gap-1 sm:gap-2">
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={!isReady || !activeConversationId}
+            disabled={!isReady || !conversationId}
             className="p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
             title="Attach file"
           >
@@ -130,23 +147,23 @@ export default function ChatPanel() {
             multiple
             accept=".cif,.poscar,.vasp,.xyz,.pdb,.json,.txt,.in,.out"
             className="hidden"
-            onChange={(e) => handleFileAttach(e.target.files)}
+            onChange={(e) => void handleFileAttach(e.target.files)}
           />
-          
+
           <div className="flex-1 relative">
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder={
-                !activeConversationId 
-                  ? "Create or select a conversation first..." 
-                  : isReady 
-                    ? "Ask about DFT calculations or upload a structure..." 
+                !conversationId
+                  ? 'Create or select a conversation first...'
+                  : isReady
+                    ? 'Ask about DFT calculations or upload a structure...'
                     : status === 'opening'
-                      ? "Starting agent pod..."
-                      : "Connecting..."
+                      ? 'Starting agent pod...'
+                      : 'Connecting...'
               }
-              disabled={!isReady || !activeConversationId}
+              disabled={!isReady || !conversationId}
               className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent resize-none disabled:opacity-50"
               rows={1}
               onKeyDown={(e) => {

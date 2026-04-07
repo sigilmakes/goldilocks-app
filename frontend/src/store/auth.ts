@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../api/client';
+import { resetUserScopedFrontendState } from './session-reset';
 
 interface AuthResponse {
   token: string;
@@ -45,6 +46,7 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           const res = await api.post<AuthResponse>('/auth/login', { email, password });
+          resetUserScopedFrontendState();
           set({
             user: res.user,
             token: res.token,
@@ -64,6 +66,7 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           const res = await api.post<AuthResponse>('/auth/register', { email, password, displayName });
+          resetUserScopedFrontendState();
           set({
             user: res.user,
             token: res.token,
@@ -80,6 +83,7 @@ export const useAuthStore = create<AuthState>()(
       },
       
       logout: () => {
+        resetUserScopedFrontendState();
         set({
           user: null,
           token: null,
@@ -97,6 +101,7 @@ export const useAuthStore = create<AuthState>()(
           const res = await api.get<MeResponse>('/auth/me');
           set({ user: res.user, isAuthenticated: true });
         } catch {
+          resetUserScopedFrontendState();
           set({ user: null, token: null, isAuthenticated: false });
         }
       },

@@ -27,9 +27,16 @@
 
 /* Remap Tailwind slate palette in light mode */
 .light .bg-slate-900 { background-color: #ffffff; }
+.light .bg-slate-900\/60 { background-color: rgba(255, 255, 255, 0.6); }
+.light .bg-slate-900\/50 { background-color: rgba(248, 250, 252, 0.85); }
+.light .bg-slate-900\/40 { background-color: rgba(248, 250, 252, 0.75); }
 .light .bg-slate-800 { background-color: #f1f5f9; }
+.light .bg-slate-800\/70 { background-color: rgba(241, 245, 249, 0.92); }
+.light .bg-slate-800\/50 { background-color: rgba(241, 245, 249, 0.75); }
 .light .bg-slate-700 { background-color: #e2e8f0; }
+.light .bg-slate-700\/80 { background-color: rgba(226, 232, 240, 0.8); }
 .light .bg-slate-700\/50 { background-color: rgba(226, 232, 240, 0.5); }
+.light .bg-slate-700\/30 { background-color: rgba(226, 232, 240, 0.3); }
 .light .bg-slate-600 { background-color: #cbd5e1; }
 
 .light .text-white { color: #1e293b; }
@@ -39,6 +46,7 @@
 .light .text-slate-500 { color: #94a3b8; }
 
 .light .border-slate-700 { border-color: #e2e8f0; }
+.light .border-slate-700\/80 { border-color: rgba(226, 232, 240, 0.8); }
 .light .border-slate-600 { border-color: #cbd5e1; }
 
 .light .hover\:bg-slate-700:hover { background-color: #e2e8f0; }
@@ -65,29 +73,6 @@ body {
 
 * {
   box-sizing: border-box;
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-bg-tertiary);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
-}
-
-.light ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
 }
 
 /* ─── Chat markdown ─── */
@@ -181,3 +166,131 @@ body {
 .light .chat-markdown pre code { color: #334155; }
 .light .chat-markdown a { color: #d97706; }
 .light .chat-markdown blockquote { color: #64748b; }
+
+/* ─── Milkdown editor ─── */
+.milkdown-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.milkdown-editor > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.milkdown-editor .milkdown {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 32px;
+  background: transparent;
+}
+
+.milkdown-editor .milkdown .editor,
+.milkdown-editor [data-milkdown-root],
+.milkdown-editor .ProseMirror-root {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.milkdown-editor .ProseMirror {
+  outline: none;
+  min-height: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  color: var(--color-text);
+  line-height: 1.75;
+}
+
+.milkdown-editor .ProseMirror > * + * {
+  margin-top: 0.5em;
+}
+
+.milkdown-editor .ProseMirror h1,
+.milkdown-editor .ProseMirror h2,
+.milkdown-editor .ProseMirror h3 {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.milkdown-editor .ProseMirror h1 {
+  font-size: 2em;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.3em;
+}
+
+.milkdown-editor .ProseMirror h2 { font-size: 1.5em; }
+.milkdown-editor .ProseMirror h3 { font-size: 1.25em; }
+
+.milkdown-editor .ProseMirror strong {
+  color: var(--color-text);
+}
+
+.milkdown-editor .ProseMirror a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.milkdown-editor .ProseMirror code {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 0.9em;
+  background: var(--color-bg-tertiary);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  color: var(--color-primary);
+}
+
+.milkdown-editor .ProseMirror pre {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+.milkdown-editor .ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--color-text);
+}
+
+.milkdown-editor .ProseMirror blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 14px;
+  color: var(--color-text-secondary);
+}
+
+.milkdown-editor .ProseMirror ul,
+.milkdown-editor .ProseMirror ol {
+  padding-left: 24px;
+}
+
+.milkdown-editor .ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.milkdown-editor .ProseMirror th,
+.milkdown-editor .ProseMirror td {
+  border: 1px solid var(--color-border);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.milkdown-editor .ProseMirror th {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.milkdown-editor .ProseMirror img {
+  max-width: 100%;
+  border-radius: 8px;
+}

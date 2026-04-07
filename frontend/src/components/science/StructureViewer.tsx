@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Maximize2 } from 'lucide-react';
+import { useSettingsStore } from '../../store/settings';
 
 // 3Dmol exports named functions, not a default export
 import * as $3Dmol from '3dmol';
@@ -13,6 +14,7 @@ interface StructureViewerProps {
 export default function StructureViewer({ cifData }: StructureViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<unknown>(null);
+  const theme = useSettingsStore((s) => s.theme);
   const [activeStyle, setActiveStyle] = useState<ViewStyle>('ball-stick');
   const [error, setError] = useState<string | null>(null);
 
@@ -82,7 +84,7 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
       try {
         // Create viewer with explicit dimensions
         const viewer = $3Dmol.createViewer(container, {
-          backgroundColor: '0x1e293b',
+          backgroundColor: theme === 'dark' ? '#1e293b' : '#f8fafc',
           antialias: true,
           // @ts-ignore — type mismatch in 3Dmol definitions
           defaultcolors: $3Dmol.elementColors.rasmol,
@@ -125,7 +127,7 @@ export default function StructureViewer({ cifData }: StructureViewerProps) {
         container.removeEventListener('wheel', wheelHandler, { capture: true } as EventListenerOptions);
       }
     };
-  }, [cifData]); // Only re-create when cifData changes
+  }, [cifData, theme]);
 
   // Apply style changes without recreating the viewer
   useEffect(() => {
