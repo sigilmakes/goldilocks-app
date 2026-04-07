@@ -4,6 +4,7 @@ import {
   Calculator,
   Download,
   FileCode2,
+  MessageSquarePlus,
   Send,
   Sparkles,
 } from 'lucide-react';
@@ -17,6 +18,12 @@ import { getExtension, getPathDisplayName } from '../../lib/workspaceTabs';
 import { useConversationsStore } from '../../store/conversations';
 import { useTabsStore } from '../../store/tabs';
 import { useChatPromptStore } from '../../store/chatPrompt';
+import { useChatStore } from '../../store/chat';
+import {
+  buildSeededConversationTitle,
+  getPromptTemplate,
+  type PromptTemplateId,
+} from '../../lib/promptTemplates';
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -24,33 +31,12 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function defaultsSummary(defaults: GenerationDefaults) {
-  return `functional=${defaults.functional}, pseudo_mode=${defaults.pseudoMode}, prediction_model=${defaults.model}, confidence=${defaults.confidence}`;
-}
+function getActionButtonClassName(primary = false) {
+  if (primary) {
+    return 'inline-flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white hover:bg-amber-600 border border-amber-500 rounded-lg text-sm transition-colors';
+  }
 
-function buildUseInChatPrompt(path: string, defaults: GenerationDefaults) {
-  return [
-    `Use the workspace structure file "${path}" as the active structure for this conversation.`,
-    `Generation defaults: ${defaultsSummary(defaults)}.`,
-    'Inspect the structure, summarise the key chemistry or composition, and ask what calculation I want next.',
-  ].join(' ');
-}
-
-function buildPredictPrompt(path: string, defaults: GenerationDefaults) {
-  return [
-    `Predict a k-point grid for the workspace structure file "${path}".`,
-    `Use model ${defaults.model} at confidence ${defaults.confidence}.`,
-    `Treat the current generation defaults as ${defaultsSummary(defaults)}.`,
-    'Explain the result briefly and keep any useful derived files in the workspace.',
-  ].join(' ');
-}
-
-function buildGeneratePrompt(path: string, defaults: GenerationDefaults) {
-  return [
-    `Generate a Quantum ESPRESSO SCF input file for the workspace structure file "${path}".`,
-    `Use ${defaultsSummary(defaults)}.`,
-    'Save the resulting input file in the workspace and explain the important choices you made.',
-  ].join(' ');
+  return 'inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800/70 hover:bg-slate-700 border border-slate-600 text-slate-200 rounded-lg text-sm transition-colors';
 }
 
 export default function StructureView({ path }: { path: string }) {
@@ -61,32 +47,15 @@ export default function StructureView({ path }: { path: string }) {
   const defaults = useContextStore((s) => s.generationDefaults);
   const addToast = useToastStore((s) => s.addToast);
   const files = useFilesStore((s) => s.files);
-  const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const conversations = useConversationsStore((s) => s.conversations);
-  const tabs = useTabsStore((s) => s.tabs);
+  const createConversation = useConversationsStore((s) => s.create);
   const openConversationTab = useTabsStore((s) => s.openConversationTab);
   const queuePrompt = useChatPromptStore((s) => s.queuePrompt);
+  const loadConversation = useChatStore((s) => s.loadConversation);
 
   const file = useMemo(
     () => files.find((entry) => entry.path === path) ?? null,
     [files, path]
   );
-
-  const targetConversationId = useMemo(() => {
-    const openConversationIds = tabs
-      .filter((tab) => tab.type === 'conversation')
-      .map((tab) => tab.conversationId);
-
-    if (activeConversationId && openConversationIds.includes(activeConversationId)) {
-      return activeConversationId;
-    }
-
-    if (activeConversationId) {
-      return activeConversationId;
-    }
-
-    return openConversationIds[0] ?? null;
-  }, [activeConversationId, tabs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,12 +88,21 @@ export default function StructureView({ path }: { path: string }) {
     }
   };
 
-  const runAction = (prompt: string) => {
-    if (!targetConversationId) return;
+  const runAction = async (templateId: PromptTemplateId) => {
+    const template = getPromptTemplate(templateId);
+    const input = { defaults, structurePath: path } satisfies { defaults: GenerationDefaults; structurePath: string };
+    const prompt = template.buildPrompt(input);
+    const title = buildSeededConversationTitle(template, input);
 
-    const conversation = conversations.find((entry) => entry.id === targetConversationId);
-    queuePrompt(targetConversationId, prompt);
-    openConversationTab(targetConversationId, conversation?.title ?? 'Conversation');
+    try {
+      const conversation = await createConversation(title);
+      loadConversation(conversation.id);
+      queuePrompt(conversation.id, prompt);
+      openConversationTab(conversation.id, conversation.title);
+    } catch (err) {
+      console.error('Failed to start seeded conversation:', err);
+      addToast('Failed to start conversation from structure', 'error');
+    }
   };
 
   return (
@@ -142,44 +120,45 @@ export default function StructureView({ path }: { path: string }) {
 
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => runAction(buildUseInChatPrompt(path, defaults))}
-              disabled={!targetConversationId}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => void runAction('inspect-structure')}
+              className={getActionButtonClassName()}
             >
-              <Send className="w-4 h-4" />
-              Use in chat
+              <MessageSquarePlus className="w-4 h-4 text-amber-500" />
+              New chat from structure
             </button>
             <button
-              onClick={() => runAction(buildPredictPrompt(path, defaults))}
-              disabled={!targetConversationId}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => void runAction('predict-kpoints')}
+              className={getActionButtonClassName()}
             >
-              <Sparkles className="w-4 h-4" />
+              <Sparkles className="w-4 h-4 text-amber-500" />
               Predict k-points
             </button>
             <button
-              onClick={() => runAction(buildGeneratePrompt(path, defaults))}
-              disabled={!targetConversationId}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => void runAction('generate-qe-input')}
+              className={getActionButtonClassName(true)}
             >
               <Calculator className="w-4 h-4" />
               Generate QE input
             </button>
             <button
               onClick={() => void handleDownload()}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 rounded-lg text-sm transition-colors"
+              className={getActionButtonClassName()}
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4 text-amber-500" />
               Download
             </button>
           </div>
         </div>
 
-        {!targetConversationId && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            Open or select a conversation tab first, then structure actions can send prompts into it.
+        <div className="rounded-xl border border-slate-700 bg-slate-800/70 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Send className="w-4 h-4 text-amber-500" />
+            <h2 className="text-sm font-medium text-white">Start a new conversation from this structure</h2>
           </div>
-        )}
+          <p className="text-sm text-slate-400 leading-relaxed">
+            These actions create a fresh conversation tab seeded with this workspace structure, so each task has a clean thread instead of borrowing whatever chat happened to be open.
+          </p>
+        </div>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_340px]">
           <div className="space-y-4">
