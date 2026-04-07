@@ -1,8 +1,9 @@
 import { create } from 'zustand';
-import { api } from '../api/client';
+import { api, type FileEntry } from '../api/client';
 
 export interface WorkspaceFile {
   name: string;
+  path: string;
   size: number;
   isDirectory: boolean;
   modified: number;
@@ -10,21 +11,38 @@ export interface WorkspaceFile {
 
 interface FilesState {
   files: WorkspaceFile[];
+  revision: number;
   isLoading: boolean;
   error: string | null;
 
   fetch: () => Promise<void>;
   upload: (file: File) => Promise<void>;
-  remove: (filename: string) => Promise<void>;
+  remove: (path: string) => Promise<void>;
+  touch: () => void;
   clear: () => void;
 }
 
 interface FilesResponse {
-  files: WorkspaceFile[];
+  entries: FileEntry[];
+}
+
+function flattenEntries(entries: FileEntry[], out: WorkspaceFile[] = []): WorkspaceFile[] {
+  for (const entry of entries) {
+    out.push({
+      name: entry.name,
+      path: entry.path,
+      size: entry.size ?? 0,
+      isDirectory: entry.type === 'dir',
+      modified: entry.modified ?? 0,
+    });
+    if (entry.children) flattenEntries(entry.children, out);
+  }
+  return out;
 }
 
 export const useFilesStore = create<FilesState>((set, get) => ({
   files: [],
+  revision: 0,
   isLoading: false,
   error: null,
 
@@ -32,7 +50,11 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const res = await api.get<FilesResponse>('/files');
-      set({ files: res.files, isLoading: false });
+      set((state) => ({
+        files: flattenEntries(res.entries),
+        revision: state.revision + 1,
+        isLoading: false,
+      }));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to fetch files';
       set({ error: message, isLoading: false });
@@ -53,8 +75,24 @@ export const useFilesStore = create<FilesState>((set, get) => ({
         reader.readAsDataURL(file);
       });
 
-      await api.post('/files/upload', { filename: file.name, content });
-      await get().fetch();
+      const res = await api.post<{ ok: true; name: string; path: string; size: number }>('/files/upload', { filename: file.name, content });
+      set((state) => ({
+        files: state.files.some((existing) => existing.path === res.path)
+          ? state.files
+          : [
+              {
+                name: res.name,
+                path: res.path,
+                size: res.size,
+                isDirectory: false,
+                modified: Date.now(),
+              },
+              ...state.files,
+            ],
+        revision: state.revision + 1,
+        isLoading: false,
+      }));
+      void get().fetch();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to upload file';
       set({ error: message, isLoading: false });
@@ -62,12 +100,14 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     }
   },
 
-  remove: async (filename: string) => {
+  remove: async (path: string) => {
     try {
-      await api.delete(`/files/${filename}`);
+      await api.delete(`/files/${encodeURIComponent(path)}`);
       set((state) => ({
-        files: state.files.filter((f) => f.name !== filename),
+        files: state.files.filter((file) => file.path !== path),
+        revision: state.revision + 1,
       }));
+      void get().fetch();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to delete file';
       set({ error: message });
@@ -75,5 +115,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     }
   },
 
-  clear: () => set({ files: [], error: null }),
+  touch: () => set((state) => ({ revision: state.revision + 1 })),
+
+  clear: () => set({ files: [], revision: 0, error: null }),
 }));

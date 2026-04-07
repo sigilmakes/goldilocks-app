@@ -54,3 +54,60 @@ export const api = {
   put: <T>(path: string, data?: unknown) => request<T>('PUT', path, data),
   delete: <T>(path: string) => request<T>('DELETE', path),
 };
+
+// ─── File API ────────────────────────────────────────────────────────────────
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'dir';
+  children?: FileEntry[];
+  size?: number;
+  modified?: number;
+}
+
+export async function fetchFiles(search?: string): Promise<{ entries: FileEntry[] }> {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  const qs = params.toString();
+  return api.get<{ entries: FileEntry[] }>(`/files${qs ? `?${qs}` : ''}`);
+}
+
+export async function fetchFile(path: string): Promise<{ content: string }> {
+  return api.get<{ content: string }>(`/files/${encodeURIComponent(path)}`);
+}
+
+export async function putFile(path: string, content: string): Promise<void> {
+  await api.put(`/files/${encodeURIComponent(path)}`, { content });
+}
+
+export async function deleteFile(path: string): Promise<void> {
+  await api.delete(`/files/${encodeURIComponent(path)}`);
+}
+
+export async function moveFile(from: string, to: string): Promise<void> {
+  await api.post('/files/move', { from, to });
+}
+
+export function rawFileUrl(path: string): string {
+  return `/api/files/${encodeURIComponent(path)}/raw`;
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  const token = useAuthStore.getState().token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function downloadWorkspaceFile(path: string): Promise<void> {
+  const res = await fetch(rawFileUrl(path), { headers: getAuthHeaders() });
+  if (!res.ok) {
+    throw new ApiError(`Request failed with status ${res.status}`, res.status);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = path.split('/').pop() ?? path;
+  a.click();
+  URL.revokeObjectURL(url);
+}

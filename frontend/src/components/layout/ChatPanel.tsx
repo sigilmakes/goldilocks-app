@@ -10,6 +10,7 @@ import MessageBubble from '../chat/MessageBubble';
 import { ThinkingBlock } from '../chat/MessageBubble';
 import MarkdownContent from '../chat/MarkdownContent';
 import ToolCallCard from '../chat/ToolCallCard';
+import { SEND_CHAT_PROMPT_EVENT, type SendChatPromptDetail } from '../../lib/chatPrompt';
 
 export default function ChatPanel() {
   const [message, setMessage] = useState('');
@@ -38,6 +39,18 @@ export default function ChatPanel() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, currentText, currentThinking]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<SendChatPromptDetail>;
+      const text = custom.detail?.text?.trim();
+      if (!text || !isReady || !activeConversationId || isStreaming) return;
+      send(text);
+    };
+
+    window.addEventListener(SEND_CHAT_PROMPT_EVENT, handler);
+    return () => window.removeEventListener(SEND_CHAT_PROMPT_EVENT, handler);
+  }, [activeConversationId, isReady, isStreaming, send]);
 
   const handleSend = () => {
     const text = message.trim();
