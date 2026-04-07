@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../api/client';
+import {
+  DEFAULT_WORKSPACE_VIEWER_SETTINGS,
+  normalizeExtensions,
+  type WorkspaceViewerSettings,
+} from '../lib/fileAssociations';
 
 export interface ApiKeyInfo {
   provider: string;
@@ -10,20 +15,17 @@ export interface ApiKeyInfo {
 }
 
 interface SettingsState {
-  // Theme
   theme: 'dark' | 'light';
-  // API keys (metadata only)
   apiKeys: ApiKeyInfo[];
-  // User preferences
   defaultModel: string | null;
   defaultFunctional: 'PBEsol' | 'PBE';
-  // Loading state
+  workspaceViewer: WorkspaceViewerSettings;
   isLoading: boolean;
   error: string | null;
-  // Actions
   setTheme(theme: 'dark' | 'light'): void;
   fetchSettings(): Promise<void>;
   updateSettings(settings: Partial<{ defaultModel: string; defaultFunctional: string }>): Promise<void>;
+  updateWorkspaceViewer(settings: Partial<WorkspaceViewerSettings>): void;
   addApiKey(provider: string, key: string): Promise<void>;
   removeApiKey(provider: string): Promise<void>;
   fetchApiKeys(): Promise<void>;
@@ -38,6 +40,16 @@ interface ApiKeysResponse {
   apiKeys: ApiKeyInfo[];
 }
 
+function applyTheme(theme: 'dark' | 'light') {
+  if (theme === 'dark') {
+    document.documentElement.classList.add('dark');
+    document.documentElement.classList.remove('light');
+  } else {
+    document.documentElement.classList.add('light');
+    document.documentElement.classList.remove('dark');
+  }
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -45,19 +57,13 @@ export const useSettingsStore = create<SettingsState>()(
       apiKeys: [],
       defaultModel: null,
       defaultFunctional: 'PBEsol',
+      workspaceViewer: DEFAULT_WORKSPACE_VIEWER_SETTINGS,
       isLoading: false,
       error: null,
 
       setTheme: (theme) => {
         set({ theme });
-        // Apply theme to document root
-        if (theme === 'dark') {
-          document.documentElement.classList.add('dark');
-          document.documentElement.classList.remove('light');
-        } else {
-          document.documentElement.classList.add('light');
-          document.documentElement.classList.remove('dark');
-        }
+        applyTheme(theme);
       },
 
       fetchSettings: async () => {
@@ -90,11 +96,25 @@ export const useSettingsStore = create<SettingsState>()(
         }
       },
 
+      updateWorkspaceViewer: (settings) => {
+        set((state) => ({
+          workspaceViewer: {
+            ...state.workspaceViewer,
+            ...settings,
+            monacoExtensions: settings.monacoExtensions
+              ? normalizeExtensions(settings.monacoExtensions)
+              : state.workspaceViewer.monacoExtensions,
+            imageViewerExtensions: settings.imageViewerExtensions
+              ? normalizeExtensions(settings.imageViewerExtensions)
+              : state.workspaceViewer.imageViewerExtensions,
+          },
+        }));
+      },
+
       addApiKey: async (provider, key) => {
         set({ isLoading: true, error: null });
         try {
           await api.put('/settings/api-key', { provider, key });
-          // Refresh API keys after adding
           const res = await api.get<ApiKeysResponse>('/settings/api-keys');
           set({ apiKeys: res.apiKeys, isLoading: false });
         } catch (err: unknown) {
@@ -134,7 +154,30 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'goldilocks-settings',
-      partialize: (state) => ({ theme: state.theme }),
+      partialize: (state) => ({
+        theme: state.theme,
+        workspaceViewer: state.workspaceViewer,
+      }),
+      merge: (persisted, current) => {
+        const typedPersisted = persisted as Partial<SettingsState> | undefined;
+        return {
+          ...current,
+          ...typedPersisted,
+          workspaceViewer: {
+            ...DEFAULT_WORKSPACE_VIEWER_SETTINGS,
+            ...typedPersisted?.workspaceViewer,
+            monacoExtensions: normalizeExtensions(
+              typedPersisted?.workspaceViewer?.monacoExtensions ?? DEFAULT_WORKSPACE_VIEWER_SETTINGS.monacoExtensions
+            ),
+            imageViewerExtensions: normalizeExtensions(
+              typedPersisted?.workspaceViewer?.imageViewerExtensions ?? DEFAULT_WORKSPACE_VIEWER_SETTINGS.imageViewerExtensions
+            ),
+          },
+        } satisfies SettingsState;
+      },
+      onRehydrateStorage: () => (state) => {
+        if (state) applyTheme(state.theme);
+      },
     }
   )
 );

@@ -11,11 +11,16 @@
     "lint": "eslint src/"
   },
   "dependencies": {
+    "@milkdown/kit": "^7.20.0",
+    "@milkdown/react": "^7.20.0",
+    "@prosemirror-adapter/react": "^0.5.3",
     "3dmol": "^2.5.4",
     "clsx": "^2.1.1",
     "lucide-react": "^0.511.0",
     "marked": "^15.0.12",
     "mermaid": "^11.13.0",
+    "monaco-editor": "^0.55.1",
+    "pdfjs-dist": "^5.6.205",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.5.0",
