@@ -3,6 +3,7 @@ import { Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
 import type { ChatMessage, AssistantBlock } from '../../store/chat';
 import MarkdownContent from './MarkdownContent';
 import ToolCallCard from './ToolCallCard';
+import { useSettingsStore } from '../../store/settings';
 
 export default function MessageBubble({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
@@ -47,22 +48,29 @@ function AssistantBlockRenderer({ block }: { block: AssistantBlock }) {
 
 export function ThinkingBlock({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
+  const theme = useSettingsStore((s) => s.theme);
+  const headerClass = theme === 'light'
+    ? 'bg-slate-900/50 hover:bg-slate-900/60 text-slate-300'
+    : 'bg-slate-700/50 hover:bg-slate-700 text-slate-400';
+  const bodyClass = theme === 'light'
+    ? 'bg-slate-800/50 text-slate-300'
+    : 'bg-slate-800/50 text-slate-400';
 
   return (
     <div className="border border-slate-600 rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-slate-700/50 hover:bg-slate-700 transition-colors text-left"
+        className={`w-full flex items-center gap-2 px-3 py-2 transition-colors text-left ${headerClass}`}
       >
         {expanded ? (
-          <ChevronDown className="w-4 h-4 text-slate-400" />
+          <ChevronDown className="w-4 h-4" />
         ) : (
-          <ChevronRight className="w-4 h-4 text-slate-400" />
+          <ChevronRight className="w-4 h-4" />
         )}
-        <span className="text-sm text-slate-400">Thinking</span>
+        <span className="text-sm">Thinking</span>
       </button>
       {expanded && (
-        <div className="px-3 py-2 text-sm text-slate-400 whitespace-pre-wrap bg-slate-800/50">
+        <div className={`px-3 py-2 text-sm whitespace-pre-wrap ${bodyClass}`}>
           {content}
         </div>
       )}

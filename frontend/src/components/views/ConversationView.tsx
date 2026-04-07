@@ -15,5 +15,9 @@ export default function ConversationView({ conversationId }: { conversationId: s
     }
   }, [activeConversationId, conversationId, loadConversation, setActiveConversation]);
 
-  return <ChatPanel conversationId={conversationId} />;
+  return (
+    <div className="h-full min-h-0 min-w-0 flex flex-col overflow-hidden">
+      <ChatPanel conversationId={conversationId} />
+    </div>
+  );
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import type { ToolCall } from '../../store/chat';
+import { useSettingsStore } from '../../store/settings';
 
 /**
  * Try to extract readable content from streaming JSON tool arguments.
@@ -52,6 +53,7 @@ function extractStreamContent(raw: string): { toolName: string; filePath: string
 
 export default function ToolCallCard({ tool }: { tool: ToolCall }) {
   const [expanded, setExpanded] = useState(tool.status === 'running');
+  const theme = useSettingsStore((s) => s.theme);
 
   useEffect(() => {
     if (tool.status === 'running') setExpanded(true);
@@ -82,42 +84,54 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
       ? 'border-red-500/50'
       : 'border-green-500/50';
 
+  const headerClass = theme === 'light'
+    ? 'bg-slate-900/50 hover:bg-slate-900/60 text-slate-300'
+    : 'bg-slate-700/50 hover:bg-slate-700 text-slate-200';
+
+  const bodyClass = theme === 'light'
+    ? 'bg-slate-800/50'
+    : 'bg-slate-800/50';
+
+  const detailTextClass = theme === 'light' ? 'text-slate-300' : 'text-slate-400';
+  const filePathClass = theme === 'light' ? 'text-slate-300' : 'text-slate-400';
+  const preClass = theme === 'light' ? 'text-slate-200 bg-slate-900/40' : 'text-slate-300 bg-slate-900/50';
+
   return (
     <div className={`border ${statusColor} rounded-lg overflow-hidden`}>
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-slate-700/50 hover:bg-slate-700 transition-colors text-left"
+        className={`w-full flex items-center gap-2 px-3 py-2 transition-colors text-left ${headerClass}`}
       >
         {expanded ? (
-          <ChevronDown className="w-4 h-4 text-slate-400" />
+          <ChevronDown className="w-4 h-4" />
         ) : (
-          <ChevronRight className="w-4 h-4 text-slate-400" />
+          <ChevronRight className="w-4 h-4" />
         )}
-        <span className="text-sm font-medium text-slate-200">{displayName}</span>
+        <span className="text-sm font-medium">{displayName}</span>
         {(argsSummary ?? parsed?.filePath) && (
-          <span className="text-xs text-slate-400 font-mono ml-1 truncate">{argsSummary ?? parsed?.filePath}</span>
+          <span className={`text-xs font-mono ml-1 truncate ${filePathClass}`}>{argsSummary ?? parsed?.filePath}</span>
         )}
         {tool.status === 'running' && (
           <Loader2 className="w-4 h-4 text-amber-500 animate-spin ml-auto" />
         )}
       </button>
       {expanded && (
-        <div className="px-3 py-2 space-y-2 bg-slate-800/50 overflow-hidden">
+        <div className={`px-3 py-2 space-y-2 overflow-hidden ${bodyClass}`}>
           {/* Show streaming content while tool args are being generated */}
           {parsed && parsed.content ? (
             <div className="min-w-0">
-              <pre className="text-xs text-slate-300 bg-slate-900/50 rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
+              <pre className={`text-xs rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap ${preClass}`}>
                 {parsed.content}
               </pre>
             </div>
           ) : null}
           {tool.result !== undefined && (
             <div>
-              <div className="text-xs text-slate-500 mb-1">
+              <div className={`text-xs mb-1 ${detailTextClass}`}>
                 {tool.isError ? 'Error' : 'Result'}
               </div>
               <pre className={`text-xs rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap ${
-                tool.isError ? 'text-red-400 bg-red-900/20' : 'text-slate-300 bg-slate-900/50'
+                tool.isError ? 'text-red-400 bg-red-900/20' : preClass
               }`}>
                 {typeof tool.result === 'string'
                   ? tool.result

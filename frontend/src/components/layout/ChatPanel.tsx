@@ -74,10 +74,10 @@ export default function ChatPanel({ conversationId }: { conversationId: string |
   const hasMessages = messages.length > 0 || isStreaming;
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 relative">
+    <div className="h-full flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden relative">
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto p-4 min-h-0"
+        className="flex-1 overflow-y-auto overflow-x-hidden p-4 min-h-0 min-w-0"
         onWheelCapture={(event) => {
           if (event.deltaY < 0) {
             setStickToBottom(false);

@@ -5,17 +5,17 @@ import StructureView from '../views/StructureView';
 import WelcomeView from '../views/WelcomeView';
 
 export default function TabContentHost({ tab }: { tab: AppTab | null }) {
-  if (!tab) {
-    return <WelcomeView />;
-  }
-
-  if (tab.type === 'conversation') {
-    return <ConversationView conversationId={tab.conversationId} />;
-  }
-
-  if (tab.type === 'structure') {
-    return <StructureView path={tab.path} />;
-  }
-
-  return <FileView path={tab.path} />;
+  return (
+    <div className="h-full min-h-0 min-w-0 flex flex-col overflow-hidden">
+      {!tab ? (
+        <WelcomeView />
+      ) : tab.type === 'conversation' ? (
+        <ConversationView conversationId={tab.conversationId} />
+      ) : tab.type === 'structure' ? (
+        <StructureView path={tab.path} />
+      ) : (
+        <FileView path={tab.path} />
+      )}
+    </div>
+  );
 }
