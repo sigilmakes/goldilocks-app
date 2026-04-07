@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react';
 import { Editor, rootCtx, defaultValueCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
@@ -13,16 +14,20 @@ interface MilkdownEditorInnerProps {
 }
 
 function MilkdownEditorInner({ initialValue, editorKey, onChange }: MilkdownEditorInnerProps) {
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
   useEditor((root) => {
     const editor = Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, root);
         ctx.set(defaultValueCtx, initialValue);
-        if (onChange) {
-          ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
-            onChange(markdown);
-          });
-        }
+        ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
+          onChangeRef.current?.(markdown);
+        });
       })
       .use(commonmark)
       .use(gfm)

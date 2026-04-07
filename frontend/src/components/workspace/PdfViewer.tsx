@@ -25,6 +25,8 @@ export default function PdfViewer({ path }: { path: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    renderGenerationRef.current += 1;
+    containerRef.current?.replaceChildren();
     setError(null);
     setLoading(true);
     setPageCount(0);
@@ -53,6 +55,7 @@ export default function PdfViewer({ path }: { path: string }) {
       } catch (err) {
         if (cancelled) return;
         console.error('[PDF] Load error:', err);
+        containerRef.current?.replaceChildren();
         setError(err instanceof Error ? err.message : 'Failed to load PDF');
         setLoading(false);
       }
@@ -61,6 +64,8 @@ export default function PdfViewer({ path }: { path: string }) {
     void loadPdf();
     return () => {
       cancelled = true;
+      renderGenerationRef.current += 1;
+      containerRef.current?.replaceChildren();
       pdfRef.current?.destroy();
       pdfRef.current = null;
     };
@@ -73,7 +78,7 @@ export default function PdfViewer({ path }: { path: string }) {
     const container = host;
     const pdf = loadedPdf;
 
-    container.innerHTML = '';
+    container.replaceChildren();
     const generation = renderGenerationRef.current + 1;
     renderGenerationRef.current = generation;
 
@@ -136,12 +141,12 @@ export default function PdfViewer({ path }: { path: string }) {
         <div className="flex-1 flex items-center justify-center p-6 text-slate-400 text-sm italic">
           Loading PDF…
         </div>
-      ) : null}
-
-      <div
-        ref={containerRef}
-        className={`flex-1 overflow-auto p-6 space-y-4 ${theme === 'dark' ? 'bg-slate-900/30' : 'bg-slate-900/10'}`}
-      />
+      ) : (
+        <div
+          ref={containerRef}
+          className={`flex-1 overflow-auto p-6 space-y-4 ${theme === 'dark' ? 'bg-slate-900/30' : 'bg-slate-900/10'}`}
+        />
+      )}
     </div>
   );
 }
