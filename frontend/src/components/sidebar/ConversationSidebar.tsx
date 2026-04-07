@@ -1,4 +1,4 @@
-import { Plus, MessageSquare, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, AlertTriangle, PencilLine } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useConversationsStore, type Conversation } from '../../store/conversations';
 import { useChatStore } from '../../store/chat';
@@ -12,6 +12,11 @@ interface DeleteDialogState {
   title: string;
 }
 
+interface RenameDialogState {
+  conversationId: string;
+  title: string;
+}
+
 export default function ConversationSidebar({ onNavigate }: { onNavigate?: () => void }) {
   const {
     conversations,
@@ -19,11 +24,13 @@ export default function ConversationSidebar({ onNavigate }: { onNavigate?: () =>
     isLoading,
     fetch,
     create,
+    rename,
     remove,
     setActive,
   } = useConversationsStore();
 
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [skipDeleteConfirm, setSkipDeleteConfirm] = useState(false);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
 
@@ -74,6 +81,27 @@ export default function ConversationSidebar({ onNavigate }: { onNavigate?: () =>
     }
     openConversationTab(conversation.id, conversation.title);
     onNavigate?.();
+  };
+
+  const requestRenameConversation = (conversation: Conversation) => {
+    setRenameDialog({ conversationId: conversation.id, title: conversation.title });
+  };
+
+  const confirmRenameConversation = async (id: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) {
+      addToast('Conversation title cannot be empty', 'warning');
+      return;
+    }
+
+    try {
+      await rename(id, trimmed);
+      addToast('Conversation renamed', 'success');
+      setRenameDialog(null);
+    } catch (err) {
+      console.error('Failed to rename conversation:', err);
+      addToast('Failed to rename conversation', 'error');
+    }
   };
 
   const requestDeleteConversation = (conversation: Conversation) => {
@@ -149,6 +177,7 @@ export default function ConversationSidebar({ onNavigate }: { onNavigate?: () =>
                   conversation={conversation}
                   isActive={conversation.id === activeConversationId}
                   onSelect={() => handleSelectConversation(conversation)}
+                  onRename={() => requestRenameConversation(conversation)}
                   onDelete={() => requestDeleteConversation(conversation)}
                   formatDate={formatDate}
                 />
@@ -157,6 +186,14 @@ export default function ConversationSidebar({ onNavigate }: { onNavigate?: () =>
           )}
         </div>
       </div>
+
+      {renameDialog && (
+        <RenameConversationDialog
+          title={renameDialog.title}
+          onCancel={() => setRenameDialog(null)}
+          onConfirm={(title) => void confirmRenameConversation(renameDialog.conversationId, title)}
+        />
+      )}
 
       {deleteDialog && (
         <DeleteConversationDialog
@@ -175,12 +212,14 @@ function ConversationItem({
   conversation,
   isActive,
   onSelect,
+  onRename,
   onDelete,
   formatDate,
 }: {
   conversation: Conversation;
   isActive: boolean;
   onSelect: () => void;
+  onRename: () => void;
   onDelete: () => void;
   formatDate: (timestamp: number) => string;
 }) {
@@ -201,13 +240,77 @@ function ConversationItem({
         </div>
       </button>
 
-      <button
-        onClick={onDelete}
-        className="p-1 opacity-0 group-hover:opacity-100 hover:bg-slate-600 rounded transition-all flex-shrink-0"
-        title="Delete conversation"
-      >
-        <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400" />
-      </button>
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
+        <button
+          onClick={onRename}
+          className="p-1 hover:bg-slate-600 rounded transition-all"
+          title="Rename conversation"
+        >
+          <PencilLine className="w-3.5 h-3.5 text-slate-400 hover:text-amber-400" />
+        </button>
+        <button
+          onClick={onDelete}
+          className="p-1 hover:bg-slate-600 rounded transition-all"
+          title="Delete conversation"
+        >
+          <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RenameConversationDialog({
+  title,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  onCancel: () => void;
+  onConfirm: (title: string) => void;
+}) {
+  const [value, setValue] = useState(title);
+
+  return (
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-xl border border-slate-600 bg-slate-800 shadow-2xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-700 flex items-center gap-2">
+          <PencilLine className="w-4 h-4 text-amber-400" />
+          <h2 className="text-sm font-semibold text-white">Rename conversation</h2>
+        </div>
+
+        <div className="px-4 py-4 space-y-3">
+          <label className="block">
+            <span className="block text-sm text-slate-400 mb-1.5">Title</span>
+            <input
+              type="text"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              autoFocus
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onConfirm(value);
+                if (e.key === 'Escape') onCancel();
+              }}
+            />
+          </label>
+        </div>
+
+        <div className="px-4 py-3 border-t border-slate-700 flex items-center justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="px-3 py-2 rounded-lg border border-slate-600 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(value)}
+            className="px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm transition-colors"
+          >
+            Save
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
