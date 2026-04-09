@@ -10,7 +10,6 @@ import {
 export interface ApiKeyInfo {
   provider: string;
   hasKey: boolean;
-  isServerKey: boolean;
   createdAt?: number;
 }
 
@@ -130,7 +129,7 @@ export const useSettingsStore = create<SettingsState>()(
           await api.delete(`/settings/api-key/${provider}`);
           set((state) => ({
             apiKeys: state.apiKeys.map((k) =>
-              k.provider === provider ? { ...k, hasKey: false, isServerKey: false } : k
+              k.provider === provider ? { ...k, hasKey: false } : k
             ),
             isLoading: false,
           }));

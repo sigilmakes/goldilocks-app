@@ -1,5 +1,4 @@
 import type { GenerationDefaults } from '../store/context';
-import type { Conversation } from '../store/conversations';
 import { getPathDisplayName } from './workspaceTabs';
 
 export type PromptTemplateId =
@@ -130,8 +129,4 @@ export function getPromptTemplate(id: PromptTemplateId): PromptTemplateDefinitio
 
 export function buildSeededConversationTitle(template: PromptTemplateDefinition, input: PromptTemplateInput): string {
   return template.buildConversationTitle?.(input) ?? template.label;
-}
-
-export function findConversationTitle(conversations: Conversation[], id: string): string {
-  return conversations.find((entry) => entry.id === id)?.title ?? 'Conversation';
 }

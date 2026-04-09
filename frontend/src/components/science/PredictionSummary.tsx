@@ -1,4 +1,4 @@
-import { Grid3x3, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Grid3x3, ShieldCheck } from 'lucide-react';
 import { useContextStore } from '../../store/context';
 
 export default function PredictionSummary() {
@@ -87,13 +87,6 @@ export default function PredictionSummary() {
         </div>
       </div>
 
-      {/* Run again placeholder */}
-      <button
-        className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-slate-600 hover:bg-slate-500 text-slate-300 hover:text-white rounded text-xs transition-colors"
-      >
-        <RefreshCw className="w-3 h-3" />
-        Run again
-      </button>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useChatStore } from './chat';
 import { useChatPromptStore } from './chatPrompt';
 import { useConversationsStore } from './conversations';
+import { useContextStore } from './context';
 import { useFilesStore } from './files';
 import { useSettingsStore } from './settings';
 import { useTabsStore } from './tabs';
@@ -33,6 +34,8 @@ export function resetUserScopedFrontendState() {
 
   useTabsStore.setState({ tabs: [], activeTabId: null });
   useTabsStore.persist.clearStorage();
+
+  useContextStore.setState({ prediction: null });
 
   useSettingsStore.setState((state) => ({
     ...state,

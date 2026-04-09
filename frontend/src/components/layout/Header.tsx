@@ -169,14 +169,6 @@ function KeySourceBadge({ provider, apiKeys }: { provider: string; apiKeys: ApiK
 
   if (!keyInfo || !keyInfo.hasKey) return null;
 
-  if (keyInfo.isServerKey) {
-    return (
-      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 hidden sm:inline">
-        Server
-      </span>
-    );
-  }
-
   return (
     <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 hidden sm:inline">
       Your key
