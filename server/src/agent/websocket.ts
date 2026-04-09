@@ -27,6 +27,11 @@ interface GatewayToAgentMessage {
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 60_000;
 
+// Events that count as "first meaningful output" for TTFT.
+// Includes toolcall_start so a model that immediately calls a tool
+// doesn't inflate TTFT to the full turn time.
+const TTFT_CLEAR_TYPES = new Set(['text_delta', 'thinking_delta', 'tool_start', 'message_end']);
+
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   try {
@@ -43,21 +48,30 @@ export function setupWebSocket(wss: WebSocketServer): void {
     let agentWs: WebSocket | null = null;
     let agentReady = false;
     let agentGeneration = 0;
+    let currentAgentHeartbeat: ReturnType<typeof setInterval> | null = null;
     const pendingMessages: ClientMessage[] = [];
     let promptSentAt: number | null = null;
 
-    // Browser keepalive
-    let browserAlive = true;
+    // ── Browser keepalive ──
+    // Ping every HEARTBEAT_INTERVAL_MS. If no pong arrives within
+    // HEARTBEAT_TIMEOUT_MS since the last pong, terminate the connection.
+    let browserLastPong = Date.now();
     const browserHeartbeat = setInterval(() => {
       if (browserWs.readyState !== WebSocket.OPEN) {
         clearInterval(browserHeartbeat);
         return;
       }
       browserWs.ping();
+
+      if (Date.now() - browserLastPong > HEARTBEAT_TIMEOUT_MS) {
+        console.warn('Browser WebSocket pong timeout — terminating connection');
+        browserWs.terminate();
+        clearInterval(browserHeartbeat);
+      }
     }, HEARTBEAT_INTERVAL_MS);
 
     browserWs.on('pong', () => {
-      browserAlive = true;
+      browserLastPong = Date.now();
     });
 
     const cleanupAgentConnection = () => {
@@ -65,6 +79,10 @@ export function setupWebSocket(wss: WebSocketServer): void {
       agentReady = false;
       pendingMessages.length = 0;
       promptSentAt = null;
+      if (currentAgentHeartbeat) {
+        clearInterval(currentAgentHeartbeat);
+        currentAgentHeartbeat = null;
+      }
       if (agentWs) {
         const ws = agentWs;
         agentWs = null;
@@ -104,18 +122,26 @@ export function setupWebSocket(wss: WebSocketServer): void {
           agentWs = nextAgentWs;
           recordAgentConnectionOpened();
 
-          // Agent keepalive
+          // ── Agent keepalive ──
+          // Same pattern: ping at interval, enforce pong timeout.
+          let agentLastPong = Date.now();
           const agentHeartbeat = setInterval(() => {
             if (nextAgentWs.readyState !== WebSocket.OPEN) {
               clearInterval(agentHeartbeat);
               return;
             }
             nextAgentWs.ping();
-          }, HEARTBEAT_INTERVAL_MS);
 
-          let agentAlive = true;
+            if (Date.now() - agentLastPong > HEARTBEAT_TIMEOUT_MS) {
+              console.warn('Agent service WebSocket pong timeout — closing connection');
+              nextAgentWs.terminate();
+              clearInterval(agentHeartbeat);
+            }
+          }, HEARTBEAT_INTERVAL_MS);
+          currentAgentHeartbeat = agentHeartbeat;
+
           nextAgentWs.on('pong', () => {
-            agentAlive = true;
+            agentLastPong = Date.now();
           });
 
           nextAgentWs.on('open', () => {
@@ -152,12 +178,10 @@ export function setupWebSocket(wss: WebSocketServer): void {
               return;
             }
 
-            // TTFT: record time from prompt send to first content delta
-            if (promptSentAt !== null) {
-              if (agentMsg.type === 'text_delta' || agentMsg.type === 'thinking_delta' || agentMsg.type === 'message_end') {
-                recordTtft(Date.now() - promptSentAt);
-                promptSentAt = null;
-              }
+            // TTFT: record time from prompt send to first meaningful output
+            if (promptSentAt !== null && TTFT_CLEAR_TYPES.has(agentMsg.type)) {
+              recordTtft(Date.now() - promptSentAt);
+              promptSentAt = null;
             }
 
             send(browserWs, agentMsg);
@@ -165,6 +189,9 @@ export function setupWebSocket(wss: WebSocketServer): void {
 
           nextAgentWs.on('close', () => {
             clearInterval(agentHeartbeat);
+            if (currentAgentHeartbeat === agentHeartbeat) {
+              currentAgentHeartbeat = null;
+            }
             if (connectionGeneration !== agentGeneration) {
               // Stale socket — counter already decremented by cleanupAgentConnection()
               return;

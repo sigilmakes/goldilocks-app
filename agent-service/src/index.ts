@@ -68,6 +68,11 @@ function mapSessionEvent(event: SessionEvent, ws: WebSocket, state: InternalWsSt
         }
         send(ws, { type: 'thinking_delta', delta: delta.delta });
       } else if (delta.type === 'toolcall_start') {
+        if (state.promptSentAt !== null) {
+          recordTtft(Date.now() - state.promptSentAt);
+          state.promptSentAt = null;
+        }
+
         const tc = delta.partial ?? delta.toolCall;
         const toolCallId = tc?.id ?? `tc_${Date.now()}`;
         state.currentToolCallId = toolCallId;

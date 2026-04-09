@@ -1,3 +1,8 @@
+# NOTE: The active_prompts custom metric requires a Prometheus adapter
+# (e.g. prometheus-adapter) configured to scrape /api/metrics from
+# agent-service pods. Without it, k8s cannot discover this metric
+# and the HPA will report MissingMetrics. Either deploy the adapter
+# or remove the Pods metric and rely on CPU/memory alone.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
