@@ -184,7 +184,7 @@ else
     pass "create conversation → $CONV_ID"
 
     CONVS=$(curl -s "$BASE/api/conversations" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
-    COUNT=$(echo "$CONVS" | jq '.conversations | length' 2>/dev/null) || echo 0
+    COUNT=$(echo "$CONVS" | jq '.conversations | length' 2>/dev/null) || COUNT=0
     if [[ "$COUNT" -ge 1 ]]; then
       pass "list conversations → $COUNT found"
     else

@@ -81,14 +81,17 @@ function userDir(workspaceRoot: string, userId: string): string {
  * Skips hidden files/dirs (starting with .) — matches the production
  * find command's `-not -path "/home/node/.*" -not -name ".*"`.
  *
- * If searchTerm is provided, only includes:
- *   - Files whose filename contains the search term
- *   - Directories that contain (recursively) at least one matching file
- * This mirrors production's `find -name "*TERM*"` which only returns
- * matching entries, not every directory on the path to a match.
+ * Search mode mirrors production `find -name "*TERM*"` semantics:
+ *   - Only entries whose OWN name matches the search term are returned.
+ *   - Ancestor directories are NOT included just because they contain
+ *     matching descendants. The route's `buildTree()` creates ancestor
+ *     dir entries from path components, so they'll appear in the final
+ *     tree anyway — just like the real server.
+ *   - Directories ARE still recursed into (to find deeper matches),
+ *     but they're only added to results if their own name matches.
  *
- * If maxDepth is provided, limits recursion depth (production uses -maxdepth 2
- * for search, no limit for general listing).
+ * If maxDepth is provided, limits recursion depth (production uses
+ * -maxdepth 2 for search, no limit for general listing).
  */
 function listFiles(base: string, prefix: string = '', searchTerm?: string, maxDepth?: number): string[] {
   const results: string[] = [];
@@ -107,14 +110,19 @@ function listFiles(base: string, prefix: string = '', searchTerm?: string, maxDe
     const stat = statSync(full);
 
     if (stat.isDirectory()) {
-      // Recurse to find matching descendants
+      // Always recurse to find deeper matches
       const descendants = listFiles(base, rel, searchTerm, maxDepth);
-      // Include directory only if:
-      //   - No search term (list all) OR
-      //   - Directory name matches the search term OR
-      //   - Directory contains matching descendants
-      if (!searchTerm || entry.toLowerCase().includes(searchTerm.toLowerCase()) || descendants.length > 0) {
+      if (!searchTerm) {
+        // No search — list everything (files and directories)
         results.push(rel);
+        results.push(...descendants);
+      } else {
+        // Search mode — only include this directory if its own name
+        // matches. Ancestors of matching files are NOT returned;
+        // buildTree on the route side creates them from path components.
+        if (entry.toLowerCase().includes(searchTerm.toLowerCase())) {
+          results.push(rel);
+        }
         results.push(...descendants);
       }
     } else {
