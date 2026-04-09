@@ -8,7 +8,10 @@
 #   bash test/smoke-test.sh           # run all tests
 #   bash test/smoke-test.sh --fail-fast  # stop on first failure
 
-set -euo pipefail
+# set -e is intentionally NOT used here. Every curl call may hit a non-2xx
+# response; we handle errors explicitly with if/else and the pass/fail counters.
+# Using set -e + curl -f would abort the script before our error logic runs.
+set -uo pipefail
 
 FAIL_FAST=false
 if [[ "${1:-}" == "--fail-fast" ]]; then
@@ -84,7 +87,7 @@ PID=$!
 
 # Wait for server to be ready
 for i in $(seq 1 30); do
-  if curl -sf "http://localhost:$PORT/api/health" >/dev/null 2>&1; then
+  if curl -s "http://localhost:$PORT/api/health" >/dev/null 2>&1; then
     break
   fi
   sleep 0.5
@@ -93,9 +96,11 @@ done
 BASE="http://localhost:$PORT"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+# curl -s (no -f) so HTTP errors don't abort the script. We check status
+# codes and response bodies explicitly in each test section.
 
 req() {
-  curl -sf -X "${2:-GET}" \
+  curl -s -X "${2:-GET}" \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer $TOKEN" \
     "${3:-}" \
@@ -104,7 +109,7 @@ req() {
 }
 
 req_no_auth() {
-  curl -sf -X "${2:-GET}" \
+  curl -s -X "${2:-GET}" \
     -H 'Content-Type: application/json' \
     "${3:-}" \
     "$BASE$1" \
@@ -123,14 +128,11 @@ register_and_get_token() {
 
 note ""
 note "Health"
-if HEALTH=$(curl -sf "$BASE/api/health"); then
-  if echo "$HEALTH" | jq -r '.status' | grep -q 'ok'; then
-    pass "server started and healthy"
-  else
-    fail "health check returned non-ok: $HEALTH"
-  fi
+HEALTH=$(curl -s "$BASE/api/health" 2>/dev/null) || true
+if echo "$HEALTH" | jq -r '.status' 2>/dev/null | grep -q 'ok'; then
+  pass "server started and healthy"
 else
-  fail "could not reach /api/health"
+  fail "could not reach /api/health or wrong response: ${HEALTH:-<no response>}"
 fi
 
 # ── Auth ───────────────────────────────────────────────────────────────────
@@ -150,14 +152,13 @@ else
 fi
 
 if [[ -n "$TOKEN" ]]; then
-  ME=$(curl -sf "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN")
-  if echo "$ME" | jq -r '.user.email' | grep -q "$EMAIL"; then
+  ME=$(curl -s "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+  if echo "$ME" | jq -r '.user.email' 2>/dev/null | grep -q "$EMAIL"; then
     pass "GET /api/auth/me → correct user"
   else
     fail "GET /api/auth/me → wrong response: $ME"
   fi
 
-  WRONG=$(curl -s "$BASE/api/auth/me" -H "Authorization: Bearer wrong-token" 2>/dev/null || true)
   WRONG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/auth/me" -H "Authorization: Bearer wrong-token" 2>/dev/null || echo "000")
   if [[ "$WRONG_STATUS" == "401" ]]; then
     pass "invalid token → 401"
@@ -174,34 +175,34 @@ note "Conversations"
 if [[ -z "$TOKEN" ]]; then
   skip "auth failed, skipping conversations"
 else
-  CONV=$(curl -sf -X POST "$BASE/api/conversations" \
+  CONV=$(curl -s -X POST "$BASE/api/conversations" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"title":"Smoke Test Conv"}')
-  CONV_ID=$(echo "$CONV" | jq -r '.conversation.id // empty')
+    -d '{"title":"Smoke Test Conv"}' 2>/dev/null) || true
+  CONV_ID=$(echo "$CONV" | jq -r '.conversation.id // empty' 2>/dev/null) || true
 
   if [[ -n "$CONV_ID" && "$CONV_ID" != "empty" ]]; then
     pass "create conversation → $CONV_ID"
 
-    CONVS=$(curl -sf "$BASE/api/conversations" -H "Authorization: Bearer $TOKEN")
-    COUNT=$(echo "$CONVS" | jq '.conversations | length')
+    CONVS=$(curl -s "$BASE/api/conversations" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+    COUNT=$(echo "$CONVS" | jq '.conversations | length' 2>/dev/null) || echo 0
     if [[ "$COUNT" -ge 1 ]]; then
       pass "list conversations → $COUNT found"
     else
       fail "list conversations returned $COUNT"
     fi
 
-    RENAMED=$(curl -sf -X PATCH "$BASE/api/conversations/$CONV_ID" \
+    RENAMED=$(curl -s -X PATCH "$BASE/api/conversations/$CONV_ID" \
       -H "Authorization: Bearer $TOKEN" \
-      -d '{"title":"Renamed by Smoke Test"}')
-    if echo "$RENAMED" | jq -r '.conversation.title' | grep -q "Renamed by Smoke Test"; then
+      -d '{"title":"Renamed by Smoke Test"}' 2>/dev/null) || true
+    if echo "$RENAMED" | jq -r '.conversation.title' 2>/dev/null | grep -q "Renamed by Smoke Test"; then
       pass "rename conversation"
     else
       fail "rename failed: $RENAMED"
     fi
 
-    DELETED=$(curl -sf -X DELETE "$BASE/api/conversations/$CONV_ID" \
-      -H "Authorization: Bearer $TOKEN")
-    if echo "$DELETED" | jq -r '.ok' | grep -q 'true'; then
+    DELETED=$(curl -s -X DELETE "$BASE/api/conversations/$CONV_ID" \
+      -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+    if echo "$DELETED" | jq -r '.ok' 2>/dev/null | grep -q 'true'; then
       pass "delete conversation"
     else
       fail "delete failed: $DELETED"
@@ -220,26 +221,26 @@ if [[ -z "$TOKEN" ]]; then
   skip "auth failed, skipping files"
 else
   # PUT a file
-  PUT=$(curl -sf -X PUT "$BASE/api/files/smoke-test-file.txt" \
+  PUT=$(curl -s -X PUT "$BASE/api/files/smoke-test-file.txt" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"content":"Hello from smoke test"}')
-  if echo "$PUT" | jq -r '.ok // empty' | grep -q 'true'; then
+    -d '{"content":"Hello from smoke test"}' 2>/dev/null) || true
+  if echo "$PUT" | jq -r '.ok // empty' 2>/dev/null | grep -q 'true'; then
     pass "PUT /api/files/:path → created"
   else
     fail "PUT file failed: $PUT"
   fi
 
   # GET the file
-  GET=$(curl -sf "$BASE/api/files/smoke-test-file.txt" \
-    -H "Authorization: Bearer $TOKEN")
-  if echo "$GET" | jq -r '.content // empty' | grep -q "Hello from smoke test"; then
+  GET=$(curl -s "$BASE/api/files/smoke-test-file.txt" \
+    -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+  if echo "$GET" | jq -r '.content // empty' 2>/dev/null | grep -q "Hello from smoke test"; then
     pass "GET /api/files/:path → content matches"
   else
     fail "GET file failed or wrong content: $GET"
   fi
 
   # GET the tree
-  TREE=$(curl -sf "$BASE/api/files" -H "Authorization: Bearer $TOKEN")
+  TREE=$(curl -s "$BASE/api/files" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
   if echo "$TREE" | jq -r '.entries' >/dev/null 2>&1; then
     pass "GET /api/files → tree returned"
   else
@@ -247,19 +248,19 @@ else
   fi
 
   # mkdir
-  MKDIR=$(curl -sf -X POST "$BASE/api/files/mkdir" \
+  MKDIR=$(curl -s -X POST "$BASE/api/files/mkdir" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"path":"smoke-dir"}')
-  if echo "$MKDIR" | jq -r '.ok // empty' | grep -q 'true'; then
+    -d '{"path":"smoke-dir"}' 2>/dev/null) || true
+  if echo "$MKDIR" | jq -r '.ok // empty' 2>/dev/null | grep -q 'true'; then
     pass "POST /api/files/mkdir"
   else
     fail "mkdir failed: $MKDIR"
   fi
 
   # DELETE the file
-  DEL=$(curl -sf -X DELETE "$BASE/api/files/smoke-test-file.txt" \
-    -H "Authorization: Bearer $TOKEN")
-  if echo "$DEL" | jq -r '.ok // empty' | grep -q 'true'; then
+  DEL=$(curl -s -X DELETE "$BASE/api/files/smoke-test-file.txt" \
+    -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+  if echo "$DEL" | jq -r '.ok // empty' 2>/dev/null | grep -q 'true'; then
     pass "DELETE /api/files/:path"
   else
     fail "DELETE failed: $DEL"
@@ -274,23 +275,23 @@ note "Settings"
 if [[ -z "$TOKEN" ]]; then
   skip "auth failed, skipping settings"
 else
-  GET=$(curl -sf "$BASE/api/settings" -H "Authorization: Bearer $TOKEN")
+  GET=$(curl -s "$BASE/api/settings" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
   if echo "$GET" | jq -r '.settings' >/dev/null 2>&1; then
     pass "GET /api/settings → { settings: {...} }"
   else
     fail "GET settings failed: $GET"
   fi
 
-  PATCH=$(curl -sf -X PATCH "$BASE/api/settings" \
+  PATCH=$(curl -s -X PATCH "$BASE/api/settings" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"defaultModel":"claude-sonnet-4-20250514"}')
-  if echo "$PATCH" | jq -r '.settings.defaultModel' | grep -q 'claude-sonnet'; then
+    -d '{"defaultModel":"claude-sonnet-4-20250514"}' 2>/dev/null) || true
+  if echo "$PATCH" | jq -r '.settings.defaultModel' 2>/dev/null | grep -q 'claude-sonnet'; then
     pass "PATCH /api/settings → merge works"
   else
     fail "PATCH settings failed: $PATCH"
   fi
 
-  KEYS=$(curl -sf "$BASE/api/settings/api-keys" -H "Authorization: Bearer $TOKEN")
+  KEYS=$(curl -s "$BASE/api/settings/api-keys" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
   if echo "$KEYS" | jq -r '.apiKeys' >/dev/null 2>&1; then
     pass "GET /api/settings/api-keys → key list returned"
   else
@@ -312,10 +313,10 @@ note "QuickGen (requires goldilocks CLI binary)"
 if [[ -z "$TOKEN" ]]; then
   skip "auth failed, skipping quickgen"
 else
-  PRED=$(curl -sf -X POST "$BASE/api/quickgen/predict" \
+  PRED=$(curl -s -X POST "$BASE/api/quickgen/predict" \
     -H "Authorization: Bearer $TOKEN" \
     -d '{"structurePath":"test.cif","conversationId":"00000000-0000-0000-0000-000000000001","model":"ALIGNN","confidence":0.95}' \
-    2>&1) || true
+    2>/dev/null) || true
 
   if echo "$PRED" | jq -r '.prediction' >/dev/null 2>&1; then
     pass "/api/quickgen/predict → prediction returned"
@@ -327,10 +328,10 @@ else
     fi
   fi
 
-  GEN=$(curl -sf -X POST "$BASE/api/quickgen/generate" \
+  GEN=$(curl -s -X POST "$BASE/api/quickgen/generate" \
     -H "Authorization: Bearer $TOKEN" \
     -d '{"structurePath":"test.cif","conversationId":"00000000-0000-0000-0000-000000000001","functional":"PBEsol"}' \
-    2>&1) || true
+    2>/dev/null) || true
 
   if echo "$GEN" | jq -r '.filename' >/dev/null 2>&1; then
     pass "/api/quickgen/generate → file generated"

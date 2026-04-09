@@ -80,11 +80,23 @@ function userDir(workspaceRoot: string, userId: string): string {
  * List files under a directory, returning paths relative to base.
  * Skips hidden files/dirs (starting with .) — matches the production
  * find command's `-not -path "/home/node/.*" -not -name ".*"`.
+ *
+ * If searchTerm is provided, only includes:
+ *   - Files whose filename contains the search term
+ *   - Directories that contain (recursively) at least one matching file
+ * This mirrors production's `find -name "*TERM*"` which only returns
+ * matching entries, not every directory on the path to a match.
+ *
+ * If maxDepth is provided, limits recursion depth (production uses -maxdepth 2
+ * for search, no limit for general listing).
  */
-function listFiles(base: string, prefix: string = '', searchTerm?: string): string[] {
+function listFiles(base: string, prefix: string = '', searchTerm?: string, maxDepth?: number): string[] {
   const results: string[] = [];
   const dir = join(base, prefix);
   if (!existsSync(dir)) return results;
+
+  const currentDepth = prefix ? prefix.split('/').filter(Boolean).length : 0;
+  if (maxDepth !== undefined && currentDepth >= maxDepth) return results;
 
   for (const entry of readdirSync(dir)) {
     // Skip hidden files/dirs — production find excludes them
@@ -95,10 +107,18 @@ function listFiles(base: string, prefix: string = '', searchTerm?: string): stri
     const stat = statSync(full);
 
     if (stat.isDirectory()) {
-      results.push(rel + '/');
-      results.push(...listFiles(base, rel, searchTerm));
+      // Recurse to find matching descendants
+      const descendants = listFiles(base, rel, searchTerm, maxDepth);
+      // Include directory only if:
+      //   - No search term (list all) OR
+      //   - Directory name matches the search term OR
+      //   - Directory contains matching descendants
+      if (!searchTerm || entry.toLowerCase().includes(searchTerm.toLowerCase()) || descendants.length > 0) {
+        results.push(rel);
+        results.push(...descendants);
+      }
     } else {
-      // If there's a search term, only include matching filenames
+      // If there's a search term, only include matching files
       if (searchTerm && !entry.toLowerCase().includes(searchTerm.toLowerCase())) continue;
       results.push(rel);
     }
@@ -116,17 +136,16 @@ function listFiles(base: string, prefix: string = '', searchTerm?: string): stri
  *   size: parseInt(size) || 0
  *   modified: (parseInt(mtime) || 0) * 1000
  */
-function formatFindOutput(userBase: string, searchTerm?: string): string {
-  const files = listFiles(userBase, '', searchTerm);
+function formatFindOutput(userBase: string, searchTerm?: string, maxDepth?: number): string {
+  const files = listFiles(userBase, '', searchTerm, maxDepth);
   return files.map(rel => {
     const full = join(userBase, rel);
+    const statPath = full;  // no trailing slash — real find doesn't add one
     let size = 0;
     let mtime = 0;
     let type = 'regular file';
 
     try {
-      // Remove trailing / for stat — dirs are listed with trailing /
-      const statPath = rel.endsWith('/') ? full.slice(0, -1) : full;
       if (existsSync(statPath)) {
         const s = statSync(statPath);
         size = s.size;
@@ -135,7 +154,6 @@ function formatFindOutput(userBase: string, searchTerm?: string): string {
       }
     } catch { /* ignore */ }
 
-    // Production uses /home/node/ as prefix
     return `/home/node/${rel}\t${size}\t${mtime}\t${type}`;
   }).join('\n');
 }
@@ -149,6 +167,7 @@ function parseCommand(command: string[]): {
   path2?: string;
   content?: string;
   searchTerm?: string;
+  maxDepth?: number;
 } {
   const cmd = command.join(' ');
 
@@ -187,9 +206,12 @@ function parseCommand(command: string[]): {
     // The route template: -name "*${search}*"
     // The search term is between the asterisks.
     const searchMatch = cmd.match(/-name\s+["']?\*([^*]+)\*["']?/);
+    // Parse -maxdepth N (present in search queries, absent in general listing)
+    const maxDepthMatch = cmd.match(/-maxdepth\s+(\d+)/);
     return {
       op: 'find',
       searchTerm: searchMatch ? searchMatch[1] : undefined,
+      maxDepth: maxDepthMatch ? parseInt(maxDepthMatch[1]) : undefined,
     };
   }
 
@@ -303,7 +325,7 @@ async function createTestServer(): Promise<TestServer> {
         case 'find': {
           // Ensure the user directory exists even if no files written yet
           mkdirSync(userBase, { recursive: true });
-          const output = formatFindOutput(userBase, parsed.searchTerm);
+          const output = formatFindOutput(userBase, parsed.searchTerm, parsed.maxDepth);
           return {
             stdout: makeStringStream(output),
             stderr: makeStringStream(''),
