@@ -16,8 +16,6 @@ import { PassThrough } from 'stream';
 import * as k8s from '@kubernetes/client-node';
 import { getCoreApi, getKubeConfig } from './k8s-client.js';
 import { CONFIG } from '../config.js';
-import { getDb } from '../db.js';
-import { decrypt } from '../crypto.js';
 import { appendFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 
@@ -29,6 +27,8 @@ export interface ExecStreams {
   stdin: PassThrough;
   stdout: PassThrough;
   stderr: PassThrough;
+  /** Resolves when Kubernetes reports exec completion. */
+  done?: Promise<{ exitCode: number | null; status?: k8s.V1Status }>;
   /** Close the exec connection. */
   close: () => void;
 }
@@ -52,13 +52,6 @@ const AGENT_IMAGE = CONFIG.agentImage;
 const HOMES_HOST_PATH = '/data/goldilocks/homes';
 const POD_READY_TIMEOUT_MS = 120_000;
 const IDLE_TIMEOUT_MS = CONFIG.agentIdleTimeoutMs;
-
-/** Env var name for each provider's API key. */
-const PROVIDER_ENV_MAP: Record<string, string> = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  google: 'GEMINI_API_KEY',
-};
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -105,41 +98,6 @@ function isK8sNotFound(err: unknown): boolean {
     }
   }
   return false;
-}
-
-/**
- * Look up a user's encrypted API keys from the DB, decrypt them,
- * and return as env var entries for the pod spec.
- */
-function getUserApiKeyEnvVars(userId: string): Array<{ name: string; value: string }> {
-  const envVars: Array<{ name: string; value: string }> = [];
-  const seen = new Set<string>();
-
-  try {
-    const db = getDb();
-    const rows = db.prepare(
-      'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?'
-    ).all(userId) as Array<{ provider: string; encrypted_key: string }>;
-
-    for (const row of rows) {
-      const envName = PROVIDER_ENV_MAP[row.provider];
-      if (envName) {
-        try {
-          const key = decrypt(row.encrypted_key);
-          if (key) {
-            envVars.push({ name: envName, value: key });
-            seen.add(envName);
-          }
-        } catch (err) {
-          log('ERROR', `Failed to decrypt ${row.provider} key for user ${userId}`, err);
-        }
-      }
-    }
-  } catch (err) {
-    log('ERROR', 'Failed to query user API keys', err);
-  }
-
-  return envVars;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +264,10 @@ export class PodManager {
     log('INFO', `Exec in pod ${name}: ${command.join(' ')}`);
 
     let execWs: import('ws').WebSocket | null = null;
+    let resolveDone: ((result: { exitCode: number | null; status?: k8s.V1Status }) => void) | null = null;
+    const done = new Promise<{ exitCode: number | null; status?: k8s.V1Status }>((resolve) => {
+      resolveDone = resolve;
+    });
 
     try {
       execWs = await exec.exec(
@@ -315,6 +277,12 @@ export class PodManager {
         false, // tty = false
         (status) => {
           log('INFO', `Exec exited in pod ${name}`, status);
+          const exitCode = status.status === 'Success'
+            ? 0
+            : typeof status.details?.causes?.[0]?.message === 'string'
+              ? parseInt(status.details.causes[0].message, 10) || 1
+              : 1;
+          resolveDone?.({ exitCode, status });
         },
       );
     } catch (err) {
@@ -336,7 +304,10 @@ export class PodManager {
     }
 
     return {
-      stdin, stdout, stderr,
+      stdin,
+      stdout,
+      stderr,
+      done,
       close: () => {
         stdin.end();
         stdout.destroy();
@@ -482,7 +453,6 @@ export class PodManager {
             env: [
               { name: 'USER_ID', value: userId },
               { name: 'HOME', value: '/home/node' },
-              ...getUserApiKeyEnvVars(userId),
             ],
             volumeMounts: [
               { name: 'home', mountPath: '/home/node' },

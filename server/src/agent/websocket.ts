@@ -1,13 +1,13 @@
 /**
- * WebSocket handler — connects the React frontend to the Bridge.
+ * WebSocket handler — connects the React frontend to the in-process pi SDK session.
  *
  * Protocol (shared/types.ts):
  *   Client → Server: auth, open, prompt, abort
  *   Server → Client: auth_ok, auth_fail, ready, text_delta, thinking_delta,
  *                     tool_start, tool_update, tool_end, message_end, agent_end, error
  *
- * Each WebSocket connection maps to one user. Multiple tabs share the same Bridge.
- * Events from the Bridge are fanned out to all connected WebSocket clients for that user.
+ * Each WebSocket connection maps to one user. Multiple tabs share the same SDK session.
+ * Session events are fanned out to all connected WebSocket clients for that user.
  */
 
 import { WebSocket, WebSocketServer } from 'ws';
@@ -16,7 +16,7 @@ import jwt from 'jsonwebtoken';
 import { CONFIG } from '../config.js';
 import { sessionManager } from './sessions.js';
 import { getDb } from '../db.js';
-import type { BridgeEvent } from './bridge.js';
+import type { SessionEvent } from './sessions.js';
 import type { ClientMessage, ServerMessage, HistoryMessage } from '../shared/types.js';
 
 // ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
 }
 
 /**
- * Map a raw Bridge event to WebSocket messages for the frontend.
+ * Map an SDK session event to WebSocket messages for the frontend.
  *
  * Handles:
  *   - message_update (text_delta, thinking_delta)
@@ -64,7 +64,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
  *   - tool_execution_start/update/end
  *   - message_end, agent_end
  */
-function mapBridgeEvent(event: BridgeEvent, ws: WebSocket, state: ClientState): void {
+function mapBridgeEvent(event: SessionEvent, ws: WebSocket, state: ClientState): void {
   try {
     switch (event.type) {
       case 'message_update': {
@@ -261,8 +261,8 @@ export function setupWebSocket(wss: WebSocketServer): void {
                 return;
               }
 
-              // Subscribe to bridge events BEFORE switching session
-              const unsubscribe = await sessionManager.subscribe(state.user.id, (event: BridgeEvent) => {
+              // Subscribe to session events BEFORE switching session
+              const unsubscribe = await sessionManager.subscribe(state.user.id, (event: SessionEvent) => {
                 mapBridgeEvent(event, ws, state);
               });
               state.unsubscribe = unsubscribe;

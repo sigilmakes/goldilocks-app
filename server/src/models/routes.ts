@@ -1,8 +1,8 @@
 /**
- * Models route — get available models from pi via RPC.
+ * Models route — get available models from the in-process pi SDK.
  *
- * Pi knows which API keys are set and which models are available.
- * We just ask it via the Bridge.
+ * The SDK model registry knows which API keys are configured and which models
+ * are available for the current user session.
  */
 
 import { Router, Response } from 'express';

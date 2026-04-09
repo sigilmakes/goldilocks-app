@@ -1,288 +1,321 @@
-/**
- * Session Manager — maps users to Bridge instances.
- *
- * One Bridge per user. One pod per user.
- * The Bridge lives for the lifetime of the user's pod.
- *
- * Responsibilities:
- *   - getOrCreateBridge(userId): ensure pod → exec pi → create Bridge
- *   - Conversation management via pi's RPC session commands
- *   - Cleanup on shutdown
- */
-
-import { Bridge, type BridgeEvent, type BridgeEventHandler } from './bridge.js';
-import { PodManager, type ExecStreams } from './pod-manager.js';
-import { CONFIG } from '../config.js';
+import {
+  AuthStorage,
+  createAgentSession,
+  createBashTool,
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+  getAgentDir,
+  ModelRegistry,
+  SessionManager as PiSessionManager,
+  type AgentSession,
+} from '@mariozechner/pi-coding-agent';
 import { resolve } from 'path';
 import { getDb } from '../db.js';
 import { decrypt } from '../crypto.js';
+import { CONFIG } from '../config.js';
+import { PodManager } from './pod-manager.js';
+import {
+  createPodToolOperations,
+  deleteSessionFile,
+  ensureSessionDir,
+  getRemoteWorkspaceCwd,
+  isSessionPathInside,
+} from './pod-tool-operations.js';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface UserSession {
-  bridge: Bridge;
-  exec: ExecStreams;
-  activeConversationPiSessionId: string | null;
+export interface SessionEvent {
+  type: string;
+  [key: string]: unknown;
 }
 
-// ---------------------------------------------------------------------------
-// SessionManager
-// ---------------------------------------------------------------------------
+export type SessionEventHandler = (event: SessionEvent) => void;
+
+interface UserSessionContext {
+  session: AgentSession;
+  authStorage: AuthStorage;
+  modelRegistry: ModelRegistry;
+  sessionManager: PiSessionManager;
+  sessionPath: string | null;
+  authFingerprint: string;
+  subscribers: Set<SessionEventHandler>;
+  unsubscribeFns: Map<SessionEventHandler, () => void>;
+}
+
+interface ApiKeyRow {
+  provider: string;
+  encrypted_key: string;
+}
 
 class SessionManager {
-  private sessions = new Map<string, UserSession>();
+  private sessions = new Map<string, UserSessionContext>();
   private podManager = new PodManager();
-  private connecting = new Map<string, Promise<Bridge>>();
+  private connecting = new Map<string, Promise<UserSessionContext>>();
 
-  /**
-   * Get or create a Bridge for a user.
-   * If the Bridge doesn't exist or is closed, creates a new one.
-   */
-  async getOrCreateBridge(userId: string): Promise<Bridge> {
-    // Return existing bridge if alive
-    const existing = this.sessions.get(userId);
-    if (existing && !existing.bridge.isClosed) {
-      this.podManager.touch(userId);
-      return existing.bridge;
+  async subscribe(userId: string, handler: SessionEventHandler): Promise<() => void> {
+    const context = await this.getOrCreateContext(userId, null);
+    context.subscribers.add(handler);
+    this.bindSubscriber(context, handler);
+
+    return () => {
+      const current = this.sessions.get(userId);
+      current?.subscribers.delete(handler);
+      const unsubscribe = current?.unsubscribeFns.get(handler);
+      unsubscribe?.();
+      current?.unsubscribeFns.delete(handler);
+    };
+  }
+
+  async prompt(userId: string, text: string): Promise<void> {
+    const context = await this.getOrCreateContext(userId, null);
+    this.podManager.touch(userId);
+    await context.session.prompt(text);
+  }
+
+  async abort(userId: string): Promise<void> {
+    const context = this.sessions.get(userId);
+    if (context) {
+      await context.session.abort();
+    }
+  }
+
+  async switchSession(userId: string, sessionPath: string | null): Promise<string> {
+    const apiKeys = this.getUserApiKeys(userId);
+    const authFingerprint = apiKeys
+      .map((row) => `${row.provider}:${row.encrypted_key}`)
+      .sort()
+      .join('|');
+
+    const context = sessionPath === null
+      ? await this.connect(userId, null, apiKeys, authFingerprint)
+      : await this.getOrCreateContext(userId, sessionPath);
+
+    context.sessionPath = context.session.sessionFile ?? sessionPath;
+    return context.session.sessionFile ?? '';
+  }
+
+  async getMessages(userId: string): Promise<unknown[]> {
+    const context = await this.getOrCreateContext(userId, null);
+    return context.session.messages as unknown[];
+  }
+
+  async getState(userId: string): Promise<unknown> {
+    const context = await this.getOrCreateContext(userId, null);
+    return {
+      sessionFile: context.session.sessionFile,
+      model: context.session.model
+        ? {
+            provider: context.session.model.provider,
+            id: context.session.model.id,
+            name: context.session.model.name,
+          }
+        : null,
+      thinkingLevel: context.session.thinkingLevel,
+    };
+  }
+
+  async getAvailableModels(userId: string): Promise<unknown> {
+    const context = await this.getOrCreateContext(userId, null);
+    const models = await context.modelRegistry.getAvailable();
+    return {
+      models: models.map((model) => ({
+        id: model.id,
+        provider: model.provider,
+        name: model.name,
+        contextWindow: model.contextWindow,
+        supportsThinking: model.reasoning,
+      })),
+    };
+  }
+
+  async setModel(userId: string, modelId: string): Promise<void> {
+    const context = await this.getOrCreateContext(userId, null);
+    const models = await context.modelRegistry.getAvailable();
+    const model = models.find((candidate) => candidate.id === modelId);
+    if (!model) {
+      throw new Error(`Model not available: ${modelId}`);
+    }
+    await context.session.setModel(model);
+  }
+
+  async deleteConversation(userId: string, piSessionId: string): Promise<void> {
+    const sessionDir = this.getSessionDir(userId);
+    const sessionPath = resolve(piSessionId);
+    if (!isSessionPathInside(sessionDir, sessionPath)) {
+      throw new Error(`Refusing to delete session outside ${sessionDir}`);
     }
 
-    // If we're already connecting for this user, wait for that
-    const inflight = this.connecting.get(userId);
-    if (inflight) return inflight;
+    await deleteSessionFile(sessionPath);
 
-    // Create new connection
-    const promise = this.connect(userId);
+    const current = this.sessions.get(userId);
+    if (current?.session.sessionFile === sessionPath) {
+      await this.disposeContext(userId);
+    }
+  }
+
+  touch(userId: string): void {
+    this.podManager.touch(userId);
+  }
+
+  async disconnect(userId: string): Promise<void> {
+    await this.disposeContext(userId);
+    await this.podManager.deletePod(userId);
+  }
+
+  async shutdown(): Promise<void> {
+    for (const userId of this.sessions.keys()) {
+      await this.disposeContext(userId);
+    }
+    await this.podManager.shutdown();
+  }
+
+  getPodManager(): PodManager {
+    return this.podManager;
+  }
+
+  private async getOrCreateContext(userId: string, requestedSessionPath: string | null): Promise<UserSessionContext> {
+    const apiKeys = this.getUserApiKeys(userId);
+    const authFingerprint = apiKeys
+      .map((row) => `${row.provider}:${row.encrypted_key}`)
+      .sort()
+      .join('|');
+
+    const existing = this.sessions.get(userId);
+    if (existing) {
+      const normalizedRequested = requestedSessionPath ? resolve(requestedSessionPath) : existing.sessionPath;
+      const normalizedExisting = existing.sessionPath ? resolve(existing.sessionPath) : null;
+
+      if (normalizedExisting === normalizedRequested && existing.authFingerprint === authFingerprint) {
+        this.podManager.touch(userId);
+        return existing;
+      }
+    }
+
+    const inflight = this.connecting.get(userId);
+    if (inflight) {
+      return inflight;
+    }
+
+    const promise = this.connect(userId, requestedSessionPath, apiKeys, authFingerprint);
     this.connecting.set(userId, promise);
     try {
-      const bridge = await promise;
-      return bridge;
+      return await promise;
     } finally {
       this.connecting.delete(userId);
     }
   }
 
-  /**
-   * Subscribe to events from a user's Bridge.
-   * Returns unsubscribe function.
-   */
-  async subscribe(userId: string, handler: BridgeEventHandler): Promise<() => void> {
-    const bridge = await this.getOrCreateBridge(userId);
-    return bridge.subscribe(handler);
-  }
+  private async connect(
+    userId: string,
+    requestedSessionPath: string | null,
+    apiKeys: ApiKeyRow[],
+    authFingerprint: string,
+  ): Promise<UserSessionContext> {
+    const priorSubscribers = new Set(this.sessions.get(userId)?.subscribers ?? []);
+    await this.disposeContext(userId);
 
-  /**
-   * Send a prompt to the user's pi process.
-   */
-  async prompt(userId: string, text: string): Promise<string> {
-    const bridge = await this.getOrCreateBridge(userId);
-    this.podManager.touch(userId);
-    return bridge.prompt(text);
-  }
+    const sessionDir = this.getSessionDir(userId);
+    await ensureSessionDir(sessionDir);
 
-  /**
-   * Abort the current prompt.
-   */
-  async abort(userId: string): Promise<void> {
-    const session = this.sessions.get(userId);
-    if (session && !session.bridge.isClosed) {
-      await session.bridge.abort();
-    }
-  }
+    const authStorage = AuthStorage.inMemory();
+    this.syncAuthStorage(authStorage, apiKeys, userId);
+    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const operations = createPodToolOperations({ podManager: this.podManager, userId });
 
-  /**
-   * Switch to a pi session (conversation). Creates a new one if sessionPath is null.
-   * Returns the pi session file path (used to switch back later).
-   */
-  async switchSession(userId: string, sessionPath: string | null): Promise<string> {
-    const bridge = await this.getOrCreateBridge(userId);
-    const session = this.sessions.get(userId)!;
+    const sessionManager = requestedSessionPath
+      ? PiSessionManager.open(resolve(requestedSessionPath), sessionDir)
+      : PiSessionManager.create(process.cwd(), sessionDir);
 
-    if (sessionPath) {
-      // Resume existing session by path
-      await bridge.rpc('switch_session', { sessionPath });
-    } else {
-      // Create a new session
-      await bridge.rpc('new_session', {});
-    }
-
-    // Get the session file path from pi's state
-    const state = await bridge.rpc('get_state', {}) as Record<string, unknown> | undefined;
-    const newPath = (state?.sessionFile as string) ?? '';
-    session.activeConversationPiSessionId = newPath;
-    return newPath;
-  }
-
-  /**
-   * Get messages from the current pi session.
-   */
-  async getMessages(userId: string): Promise<unknown> {
-    const bridge = await this.getOrCreateBridge(userId);
-    return bridge.rpc('get_messages', {});
-  }
-
-  /**
-   * Get current pi state (model, thinking level, etc.).
-   */
-  async getState(userId: string): Promise<unknown> {
-    const bridge = await this.getOrCreateBridge(userId);
-    return bridge.rpc('get_state', {});
-  }
-
-  /**
-   * Get available models.
-   */
-  async getAvailableModels(userId: string): Promise<unknown> {
-    const bridge = await this.getOrCreateBridge(userId);
-    return bridge.rpc('get_available_models', {});
-  }
-
-  /**
-   * Set the model.
-   */
-  async setModel(userId: string, modelId: string): Promise<void> {
-    const bridge = await this.getOrCreateBridge(userId);
-    await bridge.rpc('set_model', { modelId });
-  }
-
-  /**
-   * Delete a conversation's pi session files.
-   * Best-effort — pod might not be running.
-   */
-  async deleteConversation(userId: string, piSessionId: string): Promise<void> {
-    try {
-      const bridge = await this.getOrCreateBridge(userId);
-      await bridge.rpc('delete_session', { sessionId: piSessionId });
-    } catch (err) {
-      console.error(`Failed to delete pi session ${piSessionId} for user ${userId}:`, err);
-    }
-  }
-
-  /**
-   * Touch a user's session (reset idle timeout).
-   */
-  touch(userId: string): void {
-    this.podManager.touch(userId);
-  }
-
-  /**
-   * Disconnect a user's Bridge and delete their pod.
-   */
-  async disconnect(userId: string): Promise<void> {
-    const session = this.sessions.get(userId);
-    if (session) {
-      session.bridge.close();
-      session.exec.close();
-      this.sessions.delete(userId);
-    }
-    await this.podManager.deletePod(userId);
-  }
-
-  /**
-   * Shut down all sessions and pods.
-   */
-  async shutdown(): Promise<void> {
-    for (const [userId, session] of this.sessions) {
-      session.bridge.close();
-      session.exec.close();
-    }
-    this.sessions.clear();
-    await this.podManager.shutdown();
-  }
-
-  /**
-   * Get the PodManager (for file operations that need exec).
-   */
-  getPodManager(): PodManager {
-    return this.podManager;
-  }
-
-  // -------------------------------------------------------------------------
-  // Internal
-  // -------------------------------------------------------------------------
-
-  private static readonly PROVIDER_ENV_MAP: Record<string, string> = {
-    anthropic: 'ANTHROPIC_API_KEY',
-    openai: 'OPENAI_API_KEY',
-    google: 'GEMINI_API_KEY',
-  };
-
-  /**
-   * Read the user's API keys from the DB and return as KEY=value args for `env`.
-   */
-  private getUserApiKeyArgs(userId: string): string[] {
-    const args: string[] = [];
-    try {
-      const db = getDb();
-      const rows = db.prepare(
-        'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?'
-      ).all(userId) as Array<{ provider: string; encrypted_key: string }>;
-
-      for (const row of rows) {
-        const envName = SessionManager.PROVIDER_ENV_MAP[row.provider];
-        if (envName) {
-          try {
-            const key = decrypt(row.encrypted_key);
-            if (key) args.push(`${envName}=${key}`);
-          } catch {
-            console.error(`Failed to decrypt ${row.provider} key for user ${userId}`);
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Failed to query user API keys:', err);
-    }
-    return args;
-  }
-
-  private async connect(userId: string): Promise<Bridge> {
-    // Clean up stale session
-    const old = this.sessions.get(userId);
-    if (old) {
-      old.bridge.close();
-      old.exec.close();
-      this.sessions.delete(userId);
-    }
-
-    // Ensure pod is running
-    await this.podManager.ensurePod(userId);
-
-    // Give the pod a moment to stabilize
-    await new Promise((r) => setTimeout(r, 500));
-
-    // Build exec command with user's API keys injected via `env`.
-    // Keys are read fresh from the DB each time a bridge is created,
-    // so key updates take effect without restarting the pod.
-    const apiKeyEnv = this.getUserApiKeyArgs(userId);
-    const command = apiKeyEnv.length > 0
-      ? ['env', ...apiKeyEnv, 'pi', '--mode', 'rpc', '--continue']
-      : ['pi', '--mode', 'rpc', '--continue'];
-    const exec = await this.podManager.execInPod(userId, command);
-
-    // Create Bridge with the exec streams
-    const bridge = new Bridge({
-      userId,
-      logDir: resolve(CONFIG.dataDir, 'logs'),
-      stdin: exec.stdin,
-      stdout: exec.stdout,
-      stderr: exec.stderr,
-      onExit: (reason) => {
-        console.log(`Bridge for user ${userId} exited: ${reason}`);
-        this.sessions.delete(userId);
-      },
+    const { session } = await createAgentSession({
+      cwd: process.cwd(),
+      agentDir: getAgentDir(),
+      authStorage,
+      modelRegistry,
+      sessionManager,
+      tools: [
+        createReadTool(getRemoteWorkspaceCwd(), { operations: operations.read }),
+        createBashTool(getRemoteWorkspaceCwd(), { operations: operations.bash }),
+        createEditTool(getRemoteWorkspaceCwd(), { operations: operations.edit }),
+        createWriteTool(getRemoteWorkspaceCwd(), { operations: operations.write }),
+        createGrepTool(getRemoteWorkspaceCwd(), { operations: operations.grep }),
+        createFindTool(getRemoteWorkspaceCwd(), { operations: operations.find }),
+        createLsTool(getRemoteWorkspaceCwd(), { operations: operations.ls }),
+      ],
     });
 
-    const session: UserSession = {
-      bridge,
-      exec,
-      activeConversationPiSessionId: null,
+    const context: UserSessionContext = {
+      session,
+      authStorage,
+      modelRegistry,
+      sessionManager,
+      sessionPath: session.sessionFile ?? requestedSessionPath,
+      authFingerprint,
+      subscribers: priorSubscribers,
+      unsubscribeFns: new Map(),
     };
 
-    this.sessions.set(userId, session);
-    return bridge;
+    this.sessions.set(userId, context);
+
+    for (const subscriber of context.subscribers) {
+      this.bindSubscriber(context, subscriber);
+    }
+
+    return context;
+  }
+
+  private bindSubscriber(context: UserSessionContext, handler: SessionEventHandler): void {
+    context.unsubscribeFns.get(handler)?.();
+    const unsubscribe = context.session.subscribe((event) => handler(event as SessionEvent));
+    context.unsubscribeFns.set(handler, unsubscribe);
+  }
+
+  private async disposeContext(userId: string): Promise<void> {
+    const existing = this.sessions.get(userId);
+    if (!existing) return;
+
+    for (const unsubscribe of existing.unsubscribeFns.values()) {
+      try {
+        unsubscribe();
+      } catch (err) {
+        console.error('Failed to unsubscribe session listener:', err);
+      }
+    }
+    existing.unsubscribeFns.clear();
+    existing.session.dispose();
+    this.sessions.delete(userId);
+  }
+
+  private getSessionDir(userId: string): string {
+    return resolve(CONFIG.dataDir, 'agent-sessions', userId);
+  }
+
+  private getUserApiKeys(userId: string): ApiKeyRow[] {
+    const db = getDb();
+    return db.prepare(
+      'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ? ORDER BY provider ASC'
+    ).all(userId) as ApiKeyRow[];
+  }
+
+  private syncAuthStorage(authStorage: AuthStorage, rows: ApiKeyRow[], userId: string): void {
+    const providers = new Set<string>();
+
+    for (const row of rows) {
+      try {
+        authStorage.setRuntimeApiKey(row.provider, decrypt(row.encrypted_key));
+        providers.add(row.provider);
+      } catch (err) {
+        console.error(`Failed to decrypt ${row.provider} key for user ${userId}:`, err);
+      }
+    }
+
+    for (const provider of ['anthropic', 'openai', 'google']) {
+      if (!providers.has(provider)) {
+        authStorage.removeRuntimeApiKey(provider);
+      }
+    }
   }
 }
 
-// Singleton
 export const sessionManager = new SessionManager();
