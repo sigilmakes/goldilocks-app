@@ -64,6 +64,42 @@ tilt up
 
 ## Debugging
 
+## Testing
+
+The project uses [Vitest](https://vitest.dev/) for unit and integration tests.
+
+```bash
+# Run all tests
+npm test
+
+# Watch mode
+npm run test:watch
+
+# Vitest UI (browser-based test viewer)
+npm run test:ui
+
+# Bash smoke test against a live kind cluster
+npm run smoke
+```
+
+### What the tests cover
+
+- **`test/api/auth.test.ts`** — Register, login, JWT validation, error cases
+- **`test/api/conversations.test.ts`** — CRUD, ownership isolation, 404 handling
+- **`test/api/settings.test.ts`** — Settings GET/PATCH, API key CRUD
+- **`test/api/files.test.ts`** — File CRUD, upload, mkdir, move, delete, path traversal
+- **`frontend/src/lib/fileKinds.test.ts`** — Pure function tests for file kind resolution
+
+API tests use an in-process Express server with:
+  - Fresh SQLite DB per test suite
+  - Stubbed sessionManager (no k8s cluster needed)
+  - File operations use the local filesystem instead of k8s exec
+
+The smoke test (`test/smoke-test.sh`) runs against a real kind cluster and covers
+all API endpoints including models and quickgen (which need a running pod).
+
+### Debugging
+
 ### Headlamp dashboard
 
 Tilt port-forwards Headlamp to `http://localhost:8080` and generates a dev login token at `.dev/headlamp-token.txt`.
