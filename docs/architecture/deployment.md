@@ -11,16 +11,16 @@ graph TD
     end
     subgraph Kind["Kind Cluster"]
         subgraph NS["goldilocks namespace"]
-            Web["web-app Deployment<br/>Express + Vite"]
-            Agent["agent-{userId} Pod<br/>pi --mode rpc"]
+            Web["web-app Deployment<br/>Gateway (Express + Vite)"]
+            AgentSvc["agent-service Deployment<br/>Pi SDK harness"]
             SA["agent-manager<br/>ServiceAccount"]
         end
     end
 
     Code -->|"Tilt live_update"| Web
-    Code -->|"docker build + kind load"| Agent
+    Code -->|"Tilt live_update"| AgentSvc
     Data -->|"kind extraMounts"| Kind
-    SA -->|"RBAC: pods, pods/exec"| Agent
+    SA -->|"RBAC: pods, pods/exec"| Pod["Sandbox Pods<br/>(created dynamically)"]
 ```
 
 ### Kind Cluster Configuration
@@ -37,36 +37,38 @@ nodes:
         containerPath: /data/goldilocks
 ```
 
-This bind-mounts `./data/` on the host into the kind node at `/data/goldilocks`. Both the web app (SQLite, logs) and agent pods (user homes) use hostPath volumes pointing under this path.
+This bind-mounts `./data/` on the host into the kind node at `/data/goldilocks`. Both the web app (SQLite, logs) and sandbox pods (user homes) use hostPath volumes pointing under this path.
 
 ### Tilt Resources
 
 | Resource | Type | Description |
 |----------|------|-------------|
-| `web-app` | k8s Deployment | Express server + Vite dev server with live_update |
-| `agent-image` | local_resource | Builds agent Docker image and loads into kind |
-| `uncategorized` | k8s | Namespace, RBAC, secrets |
+| `web-app` | k8s Deployment | Gateway + Vite dev server with live_update |
+| `agent-service` | k8s Deployment | Agent service with live_update |
+| `agent-image` | local_resource | Builds sandbox pod image and loads into kind |
 
 ### Images
 
 | Image | Dockerfile | Purpose |
 |-------|-----------|---------|
-| `goldilocks-web` | `Dockerfile.web.dev` | Dev web app (tsx watch + Vite) |
-| `goldilocks-agent` | `Dockerfile.agent` | Agent container (pi installed, `sleep infinity`) |
+| `goldilocks-web` | `Dockerfile.web.dev` | Dev gateway (tsx watch + Vite) |
+| `goldilocks-agent-service` | `Dockerfile.agent-service.dev` | Dev agent service |
+| `goldilocks-agent` | `Dockerfile.agent` | Sandbox container (no pi, just `sleep infinity`) |
 
-The agent image is not deployed as a k8s resource — the web app creates agent pods dynamically. Tilt builds it and loads it into kind via `local_resource`.
+The sandbox image no longer includes pi. It's just a workspace environment with scientific tooling.
 
 ## Production
 
-Production deployment is planned but not yet implemented. Key differences from dev:
+Production deployment requires:
 
 - **Real k8s cluster** instead of kind
-- **Production Dockerfile** for web app (multi-stage build, no dev deps, `node server/dist/index.js`)
+- **Production Dockerfiles** (multi-stage builds, no dev deps)
 - **Ingress + TLS** for external access
 - **Real secrets** (not dev defaults)
-- **Network policies** to restrict agent pod egress
+- **Network policies** to restrict sandbox pod egress
 - **Resource quotas** per user pod
-- **PVC** instead of hostPath for user homes (hostPath is not safe in multi-node clusters)
+- **Prometheus adapter** for HPA custom metrics (`active_prompts`)
+- **PVC** instead of hostPath for user homes (hostPath doesn't work across nodes)
 
 ## Kubernetes Resources
 
@@ -76,27 +78,43 @@ All resources live in the `goldilocks` namespace.
 
 ### RBAC
 
-The `agent-manager` ServiceAccount is used by the web app pod. It has permissions to:
+The `agent-manager` ServiceAccount is used by both the gateway and agent-service pods. It has permissions to:
 
-- Create, delete, get, list, watch **pods** (for agent pod management)
+- Create, delete, get, list, watch **pods** (for sandbox pod management)
 - Get pod **logs** (for debugging)
-- Create, get **pods/exec** (for Bridge communication and file operations)
+- Create, get **pods/exec** (for tool execution)
 - Create **pods/portforward** (reserved for future use)
 - Get **secrets** (for HPC SSH key, future use)
 
-### Web App Deployment
+### Gateway Deployment
 
-Single-replica deployment with:
-- Ports: 3000 (Express), 5173 (Vite)
-- Volume: hostPath at `/data/goldilocks` for SQLite and logs
-- Probes: readiness and liveness on `/api/health`
-- Resources: 250m-2 CPU, 512Mi-2Gi memory
+- Port 3000 (Express), 5173 (Vite dev)
+- Readiness probe: `/api/ready` (checks DB + agent-service)
+- Liveness probe: `/api/health`
+- `preStop: sleep 5` for graceful drain
+- Resources: 250m–2 CPU, 512Mi–2Gi memory
+- HPA: 2–10 replicas, 70% CPU
 
-### Agent Pods (dynamic)
+### Agent Service Deployment
+
+- Port 3001
+- Readiness probe: `/api/ready` (checks DB)
+- Liveness probe: `/api/health`
+- `preStp: sleep 5` for graceful drain
+- Resources: 250m–2 CPU, 512Mi–2Gi memory
+- HPA: 1–5 replicas, 70% CPU + `active_prompts` custom metric
+
+### Agent Service Services
+
+Two k8s Services for the agent-service:
+- `agent-service` (port 3001) — HTTP traffic, nginx cookie affinity annotation
+- `agent-service-ws` (port 3001) — WebSocket traffic, `ClientIP` session affinity with 3600s timeout
+
+### Sandbox Pods (dynamic)
 
 Created by the Pod Manager when a user first interacts. Each pod has:
 - **Init container**: Runs as root to `chown` the hostPath volume for uid 1000
-- **Main container**: Runs as uid 1000, `sleep infinity`, pi exec'd in
+- **Main container**: Runs as uid 1000, `sleep infinity` — tools are exec'd in
 - **Home volume**: hostPath at `./data/homes/{userId}/` → `/home/node`
 - **Tmp volume**: emptyDir for scratch space
-- **Env vars**: User API keys (decrypted from DB), `HOME=/home/node`
+- **No env vars with provider keys** — credentials stay in the agent-service

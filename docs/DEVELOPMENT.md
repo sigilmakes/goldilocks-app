@@ -118,16 +118,17 @@ Headlamp runs in-cluster with a dedicated `headlamp` service account scoped to t
 
 ### Logs
 
-Server logs stream in the Tilt UI. For agent-specific logs:
+Server and agent-service logs stream in the Tilt UI. For agent-specific logs:
 
 ```bash
-# Bridge and pod manager logs
-cat data/logs/bridge-*.log
-cat data/logs/pod-manager.log
+# Gateway logs
+kubectl logs -n goldilocks -l app=web-app
 
-# Agent pod logs (stderr from pi)
-kubectl logs -n goldilocks -l app=goldilocks-web  # web pod
-kubectl logs -n goldilocks -l role=agent            # agent pods
+# Agent service logs
+kubectl logs -n goldilocks -l app=agent-service
+
+# Sandbox pod
+kubectl logs -n goldilocks -l role=agent
 ```
 
 ### Common Issues
@@ -141,13 +142,17 @@ fuser -k 3000/tcp
 fuser -k 10350/tcp
 ```
 
-**Agent pod can't start — `pi` not found in PATH**
+**Agent pod tools aren't working**
 
-The agent image needs rebuilding and loading into kind. Tilt handles this via the `agent-image` local resource, but if you reset the cluster you may need to trigger a rebuild:
+The sandbox image no longer includes pi — it just runs `sleep infinity`. Tool commands are exec'd into it by the agent-service. If file operations fail:
 
 ```bash
-tilt trigger agent-image
+kubectl logs -n goldilocks -l app=agent-service
 ```
+
+**Bridge not found**
+
+The JSONL Bridge (`bridge.ts`) has been removed. The agent-service uses the Pi SDK in-process. If you see references to `bridge` in errors, check that you're looking at the current codebase.
 
 **EACCES in agent pod**
 
@@ -187,30 +192,38 @@ goldilocks-app/
 ├── shared/
 │   └── types.ts                  WebSocket protocol types (ClientMessage, ServerMessage)
 │
-├── server/src/
-│   ├── index.ts                  Express app entry point, route registration, WebSocket setup
+├── server/src/                     ── Gateway ──
+│   ├── index.ts                  Express entry point, signal handling, shutdown drain
+│   ├── app.ts                    App factory: routes, rate limiting, health/ready/metrics endpoints
 │   ├── config.ts                 Centralized typed env vars (CONFIG object)
-│   ├── db.ts                     SQLite setup (WAL mode), auto-migration runner
+│   ├── db.ts                     SQLite setup (WAL mode), migration lock, auto-migration runner
 │   ├── crypto.ts                 AES-256-GCM encrypt/decrypt for stored API keys
 │   │
 │   ├── agent/
-│   │   ├── websocket.ts          WebSocket handler: auth → open → prompt → Bridge events
-│   │   ├── sessions.ts           SessionManager: userId → Bridge cache, session switching
-│   │   ├── bridge.ts             JSONL stdin/stdout RPC to pi (only code that talks to pi)
+│   │   ├── websocket.ts          WS relay: browser auth → internal WS to agent-service, keepalive, TTFT
+│   │   ├── agent-service-client.ts HTTP proxy to agent-service (shared-secret auth)
+│   │   ├── relay-metrics.ts      Connection counters, auth stats, TTFT percentile histogram
+│   │   ├── sessions.ts           (used by gateway for model/conversation REST proxy)
 │   │   ├── pod-manager.ts        k8s pod/volume lifecycle, exec streams, idle eviction
 │   │   ├── k8s-client.ts         Thin k8s API client wrapper
+│   │   ├── pod-tool-operations.ts Pod-backed Bash/Read/Write/Edit/Find/Grep/Ls for Pi SDK tools
 │   │   └── workspace-guard.ts    Path traversal protection for exec commands
 │   │
 │   ├── auth/
 │   │   ├── routes.ts             POST register, login; GET me
 │   │   └── middleware.ts         verifyToken (JWT), AuthRequest type
 │   │
-│   ├── conversations/routes.ts    GET list, POST create, GET/:id/messages, PATCH, DELETE
-│   ├── files/routes.ts           Workspace file CRUD via k8s exec (GET, PUT, DELETE, /upload, /move, /mkdir, /raw)
-│   ├── models/routes.ts           GET available LLMs, POST select
+│   ├── conversations/routes.ts    GET list, POST create, DELETE (proxies cleanup to agent-service)
+│   ├── files/routes.ts           Workspace file CRUD via k8s exec
+│   ├── models/routes.ts           GET available LLMs, POST select (proxied to agent-service)
 │   ├── settings/routes.ts         GET/PATCH settings, API key CRUD
-│   ├── structures/routes.ts       Structure CRUD + search (JARVIS, MP, MC3D, OQMD)
-│   └── quickgen/routes.ts         POST /predict, POST /generate (goldilocks CLI, no agent)
+│   ├── structures/routes.ts       Structure CRUD + search
+│   └── quickgen/routes.ts         POST /predict, POST /generate
+│
+├── agent-service/src/              ── Agent Service ──
+│   ├── index.ts                    WS server, Pi SDK sessions, internal WS protocol, metrics
+│   ├── metrics.ts                  Counters, auth stats, TTFT percentile histogram
+│   └── (imports from ../../server/src/ for shared config, db, sessions, pod-tool-ops)
 │
 ├── frontend/src/
 │   ├── main.tsx                  Entry point
@@ -228,7 +241,7 @@ goldilocks-app/
 │   │   ├── chatPrompt.ts         Pending prompt queue for seeded conversations
 │   │   ├── conversations.ts      Conversation list, active conversation
 │   │   ├── context.ts            ML prediction result, generation defaults
-│   │   ├── files.ts              Workspace file tree (tree + flat index)
+│   │   ├── files.ts               Workspace file tree (tree + flat index)
 │   │   ├── models.ts             Available LLM models, selected model
 │   │   ├── settings.ts           Theme, defaultModel, defaultFunctional, API key metadata
 │   │   ├── tabs.ts               Open tabs, active tab (persisted until logout)
@@ -296,11 +309,18 @@ goldilocks-app/
 │       ├── Workspace.tsx             Thin wrapper: <AppShell />
 │       └── Settings.tsx              API keys, defaults, theme (lazy-loaded)
 │
-├── k8s/                              Core Kubernetes manifests (namespace, RBAC, web-app)
+├── k8s/                              Kubernetes manifests
+│   ├── namespace.yaml
+│   ├── rbac.yaml
+│   ├── web-app.yaml                  Gateway deployment + service
+│   ├── agent-service.yaml            Agent service deployment + services (HTTP + WS)
+│   ├── web-app-hpa.yaml              Gateway horizontal pod autoscaler
+│   └── agent-service-hpa.yaml         Agent service HPA (CPU + custom metric)
 ├── deploy/
 │   ├── docker/
-│   │   ├── Dockerfile.web.dev        Dev web app (tsx watch + Vite)
-│   │   └── Dockerfile.agent          Agent container (pi installed, sleep infinity)
+│   │   ├── Dockerfile.web.dev        Dev gateway (tsx watch + Vite)
+│   │   ├── Dockerfile.agent-service.dev  Dev agent service
+│   │   └── Dockerfile.agent          Sandbox container (sleep infinity, no pi)
 │   └── kind-config.yaml              Kind cluster config with hostPath bind-mounts
 ├── dashboard/                        Headlamp ops dashboard (in-cluster)
 │   ├── k8s/headlamp.yaml
