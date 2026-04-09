@@ -60,10 +60,24 @@ spec:
               memory: 2Gi
           readinessProbe:
             httpGet:
+              path: /api/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
               path: /api/health
               port: http
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          lifecycle:
+            preStop:
+              httpGet:
+                path: /api/health
+                port: http
+
       volumes:
         - name: data
           hostPath:
@@ -75,6 +89,11 @@ kind: Service
 metadata:
   name: agent-service
   namespace: goldilocks
+  annotations:
+    # Sticky routing ensures gateway connections land on the same agent-service pod
+    # for the lifetime of a WS session.
+    nginx.ingress.kubernetes.io/affinity: cookie
+    nginx.ingress.kubernetes.io/affinity-mode: persistent
 spec:
   selector:
     app: agent-service
@@ -82,3 +101,20 @@ spec:
     - port: 3001
       targetPort: 3001
       name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-service-ws
+  namespace: goldilocks
+spec:
+  selector:
+    app: agent-service
+  ports:
+    - port: 3001
+      targetPort: 3001
+      name: ws
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600

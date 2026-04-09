@@ -69,7 +69,7 @@ docker_build(
     ],
 )
 
-k8s_yaml(['k8s/web-app.yaml', 'k8s/agent-service.yaml'])
+k8s_yaml(['k8s/web-app.yaml', 'k8s/agent-service.yaml', 'k8s/web-app-hpa.yaml', 'k8s/agent-service-hpa.yaml'])
 k8s_resource(
     'web-app',
     port_forwards=['3000:3000', '5173:5173'],
