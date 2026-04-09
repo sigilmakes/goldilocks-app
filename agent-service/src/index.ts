@@ -322,17 +322,17 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
             return;
           }
 
-          const unsubscribe = await sessionManager.subscribe(state.userId, (event: SessionEvent) => {
+          const unsubscribe = await sessionManager.subscribe(state.userId, msg.conversationId, (event: SessionEvent) => {
             mapSessionEvent(event, ws, state);
           });
           state.unsubscribe = unsubscribe;
 
-          const sessionPath = await sessionManager.switchSession(state.userId, row.pi_session_id);
+          const sessionPath = await sessionManager.switchSession(state.userId, msg.conversationId, row.pi_session_id);
           if (!row.pi_session_id && sessionPath) {
             db.prepare('UPDATE conversations SET pi_session_id = ? WHERE id = ?').run(sessionPath, msg.conversationId);
           }
 
-          const history = await sessionManager.getMessages(state.userId);
+          const history = await sessionManager.getMessages(state.userId, msg.conversationId);
           send(ws, { type: 'ready', conversationId: msg.conversationId, messages: normalizeMessages(history) });
           break;
         }
@@ -358,7 +358,7 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
           }
 
           try {
-            await sessionManager.prompt(state.userId, msg.text);
+            await sessionManager.prompt(state.userId, state.conversationId, msg.text);
           } finally {
             state.isProcessing = false;
           }
@@ -367,7 +367,7 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
 
         case 'abort': {
           if (state.isProcessing) {
-            await sessionManager.abort(state.userId);
+            await sessionManager.abort(state.userId, state.conversationId);
             state.isProcessing = false;
           }
           break;

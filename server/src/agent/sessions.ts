@@ -50,17 +50,21 @@ interface ApiKeyRow {
 }
 
 class SessionManager {
+  private static readonly DEFAULT_CONTEXT = '__default__';
+
   private sessions = new Map<string, UserSessionContext>();
   private podManager = new PodManager();
   private connecting = new Map<string, Promise<UserSessionContext>>();
+  private latestConversationByUser = new Map<string, string>();
 
-  async subscribe(userId: string, handler: SessionEventHandler): Promise<() => void> {
-    const context = await this.getOrCreateContext(userId, null);
+  async subscribe(userId: string, conversationId: string | null, handler: SessionEventHandler): Promise<() => void> {
+    const context = await this.getOrCreateContext(userId, conversationId, null);
     context.subscribers.add(handler);
     this.bindSubscriber(context, handler);
 
     return () => {
-      const current = this.sessions.get(userId);
+      const contextKey = this.makeContextId(userId, this.resolveConversationKey(userId, conversationId, false));
+      const current = this.sessions.get(contextKey);
       current?.subscribers.delete(handler);
       const unsubscribe = current?.unsubscribeFns.get(handler);
       unsubscribe?.();
@@ -68,41 +72,39 @@ class SessionManager {
     };
   }
 
-  async prompt(userId: string, text: string): Promise<void> {
-    const context = await this.getOrCreateContext(userId, null);
+  async prompt(userId: string, conversationId: string | null, text: string): Promise<void> {
+    const context = await this.getOrCreateContext(userId, conversationId, null);
     this.podManager.touch(userId);
     await context.session.prompt(text);
   }
 
-  async abort(userId: string): Promise<void> {
-    const context = this.sessions.get(userId);
+  async abort(userId: string, conversationId: string | null): Promise<void> {
+    const context = this.sessions.get(this.makeContextId(userId, this.resolveConversationKey(userId, conversationId, false)));
     if (context) {
       await context.session.abort();
     }
   }
 
-  async switchSession(userId: string, sessionPath: string | null): Promise<string> {
+  async switchSession(userId: string, conversationId: string | null, sessionPath: string | null): Promise<string> {
+    const conversationKey = this.resolveConversationKey(userId, conversationId, true);
     const apiKeys = this.getUserApiKeys(userId);
-    const authFingerprint = apiKeys
-      .map((row) => `${row.provider}:${row.encrypted_key}`)
-      .sort()
-      .join('|');
+    const authFingerprint = this.buildAuthFingerprint(apiKeys);
 
     const context = sessionPath === null
-      ? await this.connect(userId, null, apiKeys, authFingerprint)
-      : await this.getOrCreateContext(userId, sessionPath);
+      ? await this.connect(userId, conversationKey, null, apiKeys, authFingerprint)
+      : await this.getOrCreateContext(userId, conversationKey, sessionPath);
 
     context.sessionPath = context.session.sessionFile ?? sessionPath;
     return context.session.sessionFile ?? '';
   }
 
-  async getMessages(userId: string): Promise<unknown[]> {
-    const context = await this.getOrCreateContext(userId, null);
+  async getMessages(userId: string, conversationId: string | null): Promise<unknown[]> {
+    const context = await this.getOrCreateContext(userId, conversationId, null);
     return context.session.messages as unknown[];
   }
 
-  async getState(userId: string): Promise<unknown> {
-    const context = await this.getOrCreateContext(userId, null);
+  async getState(userId: string, conversationId: string | null = null): Promise<unknown> {
+    const context = await this.getOrCreateContext(userId, conversationId, null);
     return {
       sessionFile: context.session.sessionFile,
       model: context.session.model
@@ -116,8 +118,8 @@ class SessionManager {
     };
   }
 
-  async getAvailableModels(userId: string): Promise<unknown> {
-    const context = await this.getOrCreateContext(userId, null);
+  async getAvailableModels(userId: string, conversationId: string | null = null): Promise<unknown> {
+    const context = await this.getOrCreateContext(userId, conversationId, null);
     const models = await context.modelRegistry.getAvailable();
     return {
       models: models.map((model) => ({
@@ -130,8 +132,8 @@ class SessionManager {
     };
   }
 
-  async setModel(userId: string, modelId: string): Promise<void> {
-    const context = await this.getOrCreateContext(userId, null);
+  async setModel(userId: string, modelId: string, conversationId: string | null = null): Promise<void> {
+    const context = await this.getOrCreateContext(userId, conversationId, null);
     const models = await context.modelRegistry.getAvailable();
     const model = models.find((candidate) => candidate.id === modelId);
     if (!model) {
@@ -149,9 +151,10 @@ class SessionManager {
 
     await deleteSessionFile(sessionPath);
 
-    const current = this.sessions.get(userId);
-    if (current?.session.sessionFile === sessionPath) {
-      await this.disposeContext(userId);
+    for (const [contextId, context] of this.sessions) {
+      if (contextId.startsWith(`${userId}:`) && context.session.sessionFile === sessionPath) {
+        await this.disposeContext(contextId);
+      }
     }
   }
 
@@ -160,14 +163,19 @@ class SessionManager {
   }
 
   async disconnect(userId: string): Promise<void> {
-    await this.disposeContext(userId);
+    const contextIds = Array.from(this.sessions.keys()).filter((key) => key.startsWith(`${userId}:`));
+    for (const contextId of contextIds) {
+      await this.disposeContext(contextId);
+    }
+    this.latestConversationByUser.delete(userId);
     await this.podManager.deletePod(userId);
   }
 
   async shutdown(): Promise<void> {
-    for (const userId of this.sessions.keys()) {
-      await this.disposeContext(userId);
+    for (const contextId of Array.from(this.sessions.keys())) {
+      await this.disposeContext(contextId);
     }
+    this.latestConversationByUser.clear();
     await this.podManager.shutdown();
   }
 
@@ -175,14 +183,17 @@ class SessionManager {
     return this.podManager;
   }
 
-  private async getOrCreateContext(userId: string, requestedSessionPath: string | null): Promise<UserSessionContext> {
+  private async getOrCreateContext(
+    userId: string,
+    conversationId: string | null,
+    requestedSessionPath: string | null,
+  ): Promise<UserSessionContext> {
+    const conversationKey = this.resolveConversationKey(userId, conversationId, conversationId !== null);
+    const contextId = this.makeContextId(userId, conversationKey);
     const apiKeys = this.getUserApiKeys(userId);
-    const authFingerprint = apiKeys
-      .map((row) => `${row.provider}:${row.encrypted_key}`)
-      .sort()
-      .join('|');
+    const authFingerprint = this.buildAuthFingerprint(apiKeys);
 
-    const existing = this.sessions.get(userId);
+    const existing = this.sessions.get(contextId);
     if (existing) {
       const normalizedRequested = requestedSessionPath ? resolve(requestedSessionPath) : existing.sessionPath;
       const normalizedExisting = existing.sessionPath ? resolve(existing.sessionPath) : null;
@@ -193,28 +204,30 @@ class SessionManager {
       }
     }
 
-    const inflight = this.connecting.get(userId);
+    const inflight = this.connecting.get(contextId);
     if (inflight) {
       return inflight;
     }
 
-    const promise = this.connect(userId, requestedSessionPath, apiKeys, authFingerprint);
-    this.connecting.set(userId, promise);
+    const promise = this.connect(userId, conversationKey, requestedSessionPath, apiKeys, authFingerprint);
+    this.connecting.set(contextId, promise);
     try {
       return await promise;
     } finally {
-      this.connecting.delete(userId);
+      this.connecting.delete(contextId);
     }
   }
 
   private async connect(
     userId: string,
+    conversationKey: string,
     requestedSessionPath: string | null,
     apiKeys: ApiKeyRow[],
     authFingerprint: string,
   ): Promise<UserSessionContext> {
-    const priorSubscribers = new Set(this.sessions.get(userId)?.subscribers ?? []);
-    await this.disposeContext(userId);
+    const contextId = this.makeContextId(userId, conversationKey);
+    const priorSubscribers = new Set(this.sessions.get(contextId)?.subscribers ?? []);
+    await this.disposeContext(contextId);
 
     const sessionDir = this.getSessionDir(userId);
     await ensureSessionDir(sessionDir);
@@ -256,7 +269,7 @@ class SessionManager {
       unsubscribeFns: new Map(),
     };
 
-    this.sessions.set(userId, context);
+    this.sessions.set(contextId, context);
 
     for (const subscriber of context.subscribers) {
       this.bindSubscriber(context, subscriber);
@@ -271,8 +284,8 @@ class SessionManager {
     context.unsubscribeFns.set(handler, unsubscribe);
   }
 
-  private async disposeContext(userId: string): Promise<void> {
-    const existing = this.sessions.get(userId);
+  private async disposeContext(contextId: string): Promise<void> {
+    const existing = this.sessions.get(contextId);
     if (!existing) return;
 
     for (const unsubscribe of existing.unsubscribeFns.values()) {
@@ -284,7 +297,7 @@ class SessionManager {
     }
     existing.unsubscribeFns.clear();
     existing.session.dispose();
-    this.sessions.delete(userId);
+    this.sessions.delete(contextId);
   }
 
   private getSessionDir(userId: string): string {
@@ -315,6 +328,29 @@ class SessionManager {
         authStorage.removeRuntimeApiKey(provider);
       }
     }
+  }
+
+  private buildAuthFingerprint(rows: ApiKeyRow[]): string {
+    return rows
+      .map((row) => `${row.provider}:${row.encrypted_key}`)
+      .sort()
+      .join('|');
+  }
+
+  private resolveConversationKey(
+    userId: string,
+    conversationId: string | null,
+    remember: boolean,
+  ): string {
+    const conversationKey = conversationId ?? this.latestConversationByUser.get(userId) ?? SessionManager.DEFAULT_CONTEXT;
+    if (remember && conversationId) {
+      this.latestConversationByUser.set(userId, conversationId);
+    }
+    return conversationKey;
+  }
+
+  private makeContextId(userId: string, conversationKey: string): string {
+    return `${userId}:${conversationKey}`;
   }
 }
 

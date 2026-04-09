@@ -189,22 +189,29 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  db.prepare(`DELETE FROM conversations WHERE id = ?`).run(req.params.id);
-
-  // Clean up session files via the agent service
+  // Clean up session files via the agent service before deleting metadata.
   if (row.pi_session_id) {
     try {
-      await agentServiceFetch('/internal/sessions/delete', {
+      const response = await agentServiceFetch('/internal/sessions/delete', {
         method: 'POST',
         userId: req.user.id,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionPath: row.pi_session_id }),
       });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        res.status(502).json({ error: (payload as { error?: string }).error ?? 'Failed to delete agent session' });
+        return;
+      }
     } catch (err) {
       console.error('Failed to clean up pi session:', err);
+      res.status(502).json({ error: 'Failed to delete agent session' });
+      return;
     }
   }
 
+  db.prepare(`DELETE FROM conversations WHERE id = ?`).run(req.params.id);
   res.json({ ok: true });
 });
 

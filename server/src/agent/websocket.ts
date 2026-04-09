@@ -29,21 +29,28 @@ export function setupWebSocket(wss: WebSocketServer): void {
     let browserUser: AuthUser | null = null;
     let agentWs: WebSocket | null = null;
     let agentReady = false;
+    let agentGeneration = 0;
     const pendingMessages: ClientMessage[] = [];
+
+    const cleanupAgentConnection = () => {
+      agentGeneration += 1;
+      agentReady = false;
+      pendingMessages.length = 0;
+      if (agentWs) {
+        const ws = agentWs;
+        agentWs = null;
+        ws.removeAllListeners();
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      }
+    };
 
     const flushPending = () => {
       if (!agentWs || agentWs.readyState !== WebSocket.OPEN || !agentReady) return;
       for (const msg of pendingMessages.splice(0)) {
         agentWs.send(JSON.stringify(msg));
       }
-    };
-
-    const cleanup = () => {
-      if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-        agentWs.close();
-      }
-      agentWs = null;
-      agentReady = false;
     };
 
     browserWs.on('message', (raw) => {
@@ -56,21 +63,28 @@ export function setupWebSocket(wss: WebSocketServer): void {
       }
 
       if (msg.type === 'auth') {
+        cleanupAgentConnection();
+
         try {
           const payload = jwt.verify(msg.token, CONFIG.jwtSecret) as AuthUser;
           browserUser = payload;
-          agentWs = new WebSocket(CONFIG.agentServiceWsUrl);
+          const connectionGeneration = agentGeneration;
+          const nextAgentWs = new WebSocket(CONFIG.agentServiceWsUrl);
+          agentWs = nextAgentWs;
 
-          agentWs.on('open', () => {
+          nextAgentWs.on('open', () => {
+            if (connectionGeneration !== agentGeneration) return;
             const authMessage: GatewayToAgentMessage = {
               type: 'auth',
               userId: payload.id,
               gatewayToken: CONFIG.agentServiceSharedSecret,
             };
-            agentWs?.send(JSON.stringify(authMessage));
+            nextAgentWs.send(JSON.stringify(authMessage));
           });
 
-          agentWs.on('message', (agentRaw) => {
+          nextAgentWs.on('message', (agentRaw) => {
+            if (connectionGeneration !== agentGeneration) return;
+
             let agentMsg: ServerMessage;
             try {
               agentMsg = JSON.parse(agentRaw.toString()) as ServerMessage;
@@ -88,21 +102,24 @@ export function setupWebSocket(wss: WebSocketServer): void {
 
             if (agentMsg.type === 'auth_fail') {
               send(browserWs, agentMsg);
-              cleanup();
+              cleanupAgentConnection();
               return;
             }
 
             send(browserWs, agentMsg);
           });
 
-          agentWs.on('close', () => {
+          nextAgentWs.on('close', () => {
+            if (connectionGeneration !== agentGeneration) return;
             agentReady = false;
+            agentWs = null;
             if (browserWs.readyState === WebSocket.OPEN) {
               send(browserWs, { type: 'error', error: 'Agent service disconnected' });
             }
           });
 
-          agentWs.on('error', (err) => {
+          nextAgentWs.on('error', (err) => {
+            if (connectionGeneration !== agentGeneration) return;
             console.error('Agent service WebSocket error:', err);
             send(browserWs, { type: 'error', error: 'Agent service connection error' });
           });
@@ -125,10 +142,10 @@ export function setupWebSocket(wss: WebSocketServer): void {
       agentWs.send(JSON.stringify(msg));
     });
 
-    browserWs.on('close', cleanup);
+    browserWs.on('close', cleanupAgentConnection);
     browserWs.on('error', (err) => {
       console.error('Browser WebSocket error:', err);
-      cleanup();
+      cleanupAgentConnection();
     });
   });
 }

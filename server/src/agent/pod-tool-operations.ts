@@ -85,11 +85,12 @@ async function execCommand(
     const stderrChunks: Buffer[] = [];
     let stdoutEnded = false;
     let stderrEnded = false;
+    let doneResolved = !exec.done;
     let settled = false;
     let exitCode: number | null = 0;
 
     const finish = () => {
-      if (settled || !stdoutEnded || !stderrEnded) return;
+      if (settled || !stdoutEnded || !stderrEnded || !doneResolved) return;
       settled = true;
       exec.close();
       resolve({
@@ -126,7 +127,8 @@ async function execCommand(
     if (exec.done) {
       exec.done.then((result) => {
         exitCode = result.exitCode;
-        if (stdoutEnded && stderrEnded) finish();
+        doneResolved = true;
+        finish();
       }).catch((err) => {
         fail(err instanceof Error ? err : new Error(String(err)));
       });
