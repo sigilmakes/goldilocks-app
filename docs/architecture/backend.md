@@ -37,6 +37,7 @@ Maps `userId` → `Bridge` instance. One Bridge per user, not per conversation. 
 - `prompt(userId, text)`: Sends a prompt and waits for `agent_end`
 - `getMessages(userId)`: Fetches conversation history from pi
 - `getAvailableModels(userId)`: Queries pi for models with valid API keys
+- `setModel(userId, modelId)`: Switches the active model via pi RPC
 
 Deduplicates concurrent connection attempts — if two requests try to create a Bridge for the same user simultaneously, only one connection is made.
 
@@ -69,25 +70,86 @@ Translates between the frontend WebSocket protocol and Bridge events. Handles:
 - Message history loading (pi `get_messages` → frontend format)
 - Event mapping: `message_update` → `text_delta`, `tool_execution_end` → `tool_end`, etc.
 - Tool call ID mapping between model-generated IDs and pi execution IDs
-- Auto-generating conversation titles from the first user message
+
+### Workspace Guard (`workspace-guard.ts`)
+
+Security boundary for workspace operations. Intercepts all file exec commands and path arguments, stripping `/home/node/` prefixes and blocking `..` traversal. Every exec command is validated before reaching `execInPod`.
 
 ## REST API
 
+### Auth
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/auth/register` | POST | Create account |
-| `/api/auth/login` | POST | Get JWT token |
-| `/api/conversations` | GET | List conversations |
-| `/api/conversations` | POST | Create conversation |
+| `/api/auth/register` | POST | Create account (email, password, displayName) |
+| `/api/auth/login` | POST | Get JWT token (email, password) |
+| `/api/auth/me` | GET | Validate token → user profile |
+
+### Conversations
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/conversations` | GET | List user's conversations |
+| `/api/conversations` | POST | Create new conversation |
+| `/api/conversations/:id/messages` | GET | Fetch message history |
 | `/api/conversations/:id` | PATCH | Rename conversation |
 | `/api/conversations/:id` | DELETE | Delete conversation + pi session |
-| `/api/models` | GET | List available models (from pi) |
-| `/api/models/select` | POST | Set active model (via pi RPC) |
-| `/api/files` | GET | List workspace files (via exec) |
-| `/api/files/upload` | POST | Upload file to workspace (via exec) |
-| `/api/files/:name/content` | GET | Read file content (via exec) |
-| `/api/files/:name` | DELETE | Delete file (via exec) |
-| `/api/settings` | GET/PATCH | User settings |
-| `/api/settings/api-keys` | GET | List API key metadata |
-| `/api/settings/api-key` | PUT/DELETE | Set/remove API key |
+
+### Files
+
+Files live on the user's pod filesystem at `/home/node/`. All operations exec into the pod. Scoped per user (not per conversation).
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/files` | GET | List workspace tree (recursive, optional `?search=` query) |
+| `/api/files/:path` | GET | Read file content |
+| `/api/files/:path` | PUT | Create or update file (`{ content }`) |
+| `/api/files/:path` | DELETE | Delete file or directory |
+| `/api/files/:path/raw` | GET | Raw binary download |
+| `/api/files/upload` | POST | Upload file (`{ filename, content: base64 }`) |
+| `/api/files/move` | POST | Move or rename (`{ from, to }`) |
+| `/api/files/mkdir` | POST | Create directory (`{ path }`) |
+
+### Models
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/models` | GET | List available models (from pi, filtered by available keys) |
+| `/api/models/select` | POST | Set active model (`{ modelId }`) |
+
+### Settings
+
+Settings are stored as a JSON blob per user in `users.settings`. The server normalizes them to `{ settings: { ... } }` on read.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/settings` | GET | Fetch user settings → `{ settings: { defaultModel, defaultFunctional, ... } }` |
+| `/api/settings` | PATCH | Merge update user settings |
+| `/api/settings/api-keys` | GET | List API key metadata (no secrets) |
+| `/api/settings/api-key` | PUT | Store encrypted API key (`{ provider, key }`) |
+| `/api/settings/api-key/:provider` | DELETE | Remove API key |
+
+### Structures
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/structures` | GET | List user's saved structures |
+| `/api/structures` | POST | Save a structure |
+| `/api/structures/search` | POST | Search public databases (JARVIS, MP, MC3D, OQMD) |
+| `/api/library` | GET | Public CIF structure library |
+
+### QuickGen
+
+No-chat QE input generation and ML prediction. Runs the `goldilocks` CLI binary.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/quickgen/predict` | POST | ML k-point prediction (ALIGNN, RF) |
+| `/api/quickgen/generate` | POST | Generate QE input from structure + params |
+
+### System
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check (no auth required) |
+| `/ws` | WS | WebSocket (auth → open → prompt) |

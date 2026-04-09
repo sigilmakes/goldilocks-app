@@ -39,30 +39,13 @@ tilt up
 
 ## Dev Workflow
 
-```mermaid
-graph LR
-    Edit["Edit code"] --> Tilt["Tilt detects change"]
-    Tilt --> Sync["Live-update container"]
-    Sync --> TSX["tsx watch restarts server"]
-    Sync --> Vite["Vite HMR updates frontend"]
-    TSX --> Ready["Ready in ~2s"]
-    Vite --> Ready
-```
-
-Tilt watches for file changes and live-syncs them into the running container. The server uses `tsx watch` (auto-restart on change) and the frontend uses Vite HMR (instant updates).
-
-### What triggers what
-
-| Change | What happens |
-|--------|-------------|
-| `server/src/**/*.ts` | Live-synced → tsx watch restarts |
-| `frontend/src/**/*.tsx` | Live-synced → Vite HMR |
-| `shared/types.ts` | Live-synced → both restart |
-| `package.json` / `package-lock.json` | Full image rebuild |
-| `deploy/docker/Dockerfile.agent` | Agent image rebuild + kind load |
-| `k8s/*.yaml` | Re-applied to cluster |
-| `dashboard/k8s/*.yaml` | Re-applied to cluster |
-| `dashboard/scripts/*.sh` | Re-runs dashboard helper resources |
+Tilt watches for file changes and live-syncs them into the running container:
+- `server/src/**/*.ts` — live-synced → tsx watch restarts (~1–2s)
+- `frontend/src/**/*.tsx` — live-synced → Vite HMR (instant)
+- `shared/types.ts` — live-synced → both restart
+- `package.json` / `package-lock.json` — full image rebuild
+- `deploy/docker/Dockerfile.agent` — agent image rebuild + kind load
+- `k8s/*.yaml` — re-applied to cluster
 
 ### First-time setup
 
@@ -73,14 +56,9 @@ Tilt watches for file changes and live-syncs them into the running container. Th
 ### Resetting
 
 ```bash
-# Stop Tilt
-tilt down
-
-# Delete cluster and all data
-npm run dev:reset
-
-# Start fresh
-npm run dev:setup
+tilt down            # stop services
+npm run dev:reset   # delete cluster and all data
+npm run dev:setup   # start fresh
 tilt up
 ```
 
@@ -102,15 +80,6 @@ tilt trigger headlamp-token
 
 Headlamp runs in-cluster with a dedicated `headlamp` service account scoped to the `goldilocks` namespace.
 
-What Headlamp can do in v1:
-- Read namespace resources (`pods`, `services`, `deployments`, `replicasets`, `events`)
-- View pod logs
-- Exec into pods
-- Delete pods
-- Read a small amount of cluster-scoped data (`nodes`, `namespaces`, and node metrics) so the stock overview page renders correctly
-
-It is intentionally **not** a general cluster-admin dashboard.
-
 ### Logs
 
 Server logs stream in the Tilt UI. For agent-specific logs:
@@ -121,7 +90,8 @@ cat data/logs/bridge-*.log
 cat data/logs/pod-manager.log
 
 # Agent pod logs (stderr from pi)
-nix develop -c kubectl logs -n goldilocks -l role=agent
+kubectl logs -n goldilocks -l app=goldilocks-web  # web pod
+kubectl logs -n goldilocks -l role=agent            # agent pods
 ```
 
 ### Common Issues
@@ -178,45 +148,156 @@ ls data/homes/<userId>/.pi/agent/sessions/
 
 ```
 goldilocks-app/
-├── dashboard/
-│   ├── README.md                 # Dashboard backend overview + access notes
-│   └── k8s/
-│       ├── headlamp.yaml         # Headlamp deployment + ClusterIP service
-│       └── headlamp-rbac.yaml    # Dedicated ServiceAccount + namespace RBAC
+├── shared/
+│   └── types.ts                  WebSocket protocol types (ClientMessage, ServerMessage)
+│
 ├── server/src/
+│   ├── index.ts                  Express app entry point, route registration, WebSocket setup
+│   ├── config.ts                 Centralized typed env vars (CONFIG object)
+│   ├── db.ts                     SQLite setup (WAL mode), auto-migration runner
+│   ├── crypto.ts                 AES-256-GCM encrypt/decrypt for stored API keys
+│   │
 │   ├── agent/
-│   │   ├── bridge.ts           # JSONL RPC to pi
-│   │   ├── pod-manager.ts      # k8s pod/volume lifecycle
-│   │   ├── sessions.ts         # userId → Bridge mapping
-│   │   ├── websocket.ts        # Frontend ↔ Bridge protocol
-│   │   └── k8s-client.ts       # Shared k8s API client
-│   ├── auth/                   # JWT auth, bcrypt
-│   ├── conversations/          # Conversation metadata CRUD
-│   ├── files/                  # File ops via k8s exec
-│   ├── models/                 # Model selection via pi RPC
-│   ├── settings/               # User settings + API keys
-│   ├── migrations/             # SQLite migrations
-│   ├── config.ts               # Environment config
-│   ├── crypto.ts               # AES-256-GCM for API keys
-│   ├── db.ts                   # SQLite setup
-│   └── index.ts                # Express app entry point
+│   │   ├── websocket.ts          WebSocket handler: auth → open → prompt → Bridge events
+│   │   ├── sessions.ts           SessionManager: userId → Bridge cache, session switching
+│   │   ├── bridge.ts             JSONL stdin/stdout RPC to pi (only code that talks to pi)
+│   │   ├── pod-manager.ts        k8s pod/volume lifecycle, exec streams, idle eviction
+│   │   ├── k8s-client.ts         Thin k8s API client wrapper
+│   │   └── workspace-guard.ts    Path traversal protection for exec commands
+│   │
+│   ├── auth/
+│   │   ├── routes.ts             POST register, login; GET me
+│   │   └── middleware.ts         verifyToken (JWT), AuthRequest type
+│   │
+│   ├── conversations/routes.ts    GET list, POST create, GET/:id/messages, PATCH, DELETE
+│   ├── files/routes.ts           Workspace file CRUD via k8s exec (GET, PUT, DELETE, /upload, /move, /mkdir, /raw)
+│   ├── models/routes.ts           GET available LLMs, POST select
+│   ├── settings/routes.ts         GET/PATCH settings, API key CRUD
+│   ├── structures/routes.ts       Structure CRUD + search (JARVIS, MP, MC3D, OQMD)
+│   └── quickgen/routes.ts         POST /predict, POST /generate (goldilocks CLI, no agent)
+│
 ├── frontend/src/
+│   ├── main.tsx                  Entry point
+│   ├── App.tsx                   Router: /login, /settings (lazy), /* → Workspace
+│   ├── api/
+│   │   └── client.ts             Typed fetch wrapper; auto-injects Bearer token
+│   │
 │   ├── hooks/
-│   │   └── useAgent.ts         # WebSocket connection + state machine
-│   ├── store/                  # Zustand stores
+│   │   ├── useAgent.ts           WebSocket lifecycle: auth → open → prompt → stream to store
+│   │   └── useConnectionStatus.ts Polls /api/health, exponential backoff, online/offline
+│   │
+│   ├── store/
+│   │   ├── auth.ts               User session, JWT, login/logout/register
+│   │   ├── chat.ts               Messages, streaming state, active tool calls
+│   │   ├── chatPrompt.ts         Pending prompt queue for seeded conversations
+│   │   ├── conversations.ts      Conversation list, active conversation
+│   │   ├── context.ts            ML prediction result, generation defaults
+│   │   ├── files.ts              Workspace file tree (tree + flat index)
+│   │   ├── models.ts             Available LLM models, selected model
+│   │   ├── settings.ts           Theme, defaultModel, defaultFunctional, API key metadata
+│   │   ├── tabs.ts               Open tabs, active tab (persisted until logout)
+│   │   ├── toast.ts               Notification queue
+│   │   └── session-reset.ts      resetUserScopedFrontendState() — clears all user-scoped state
+│   │
+│   ├── lib/
+│   │   ├── fileKinds.ts          Canonical file-kind registry: viewer, icon, Monaco language
+│   │   ├── fileAssociations.ts    getFileExtension helper
+│   │   └── promptTemplates.ts    Structured prompt templates for QE generation
+│   │
 │   ├── components/
-│   │   ├── layout/             # Sidebar, ChatPanel, ContextPanel, Header
-│   │   ├── chat/               # MessageBubble, ToolCallCard, MarkdownContent
-│   │   └── science/            # StructureViewer, PredictionSummary
-│   └── pages/                  # Login, Workspace, Settings
-├── shared/types.ts             # WebSocket protocol types
-├── k8s/                        # Core Kubernetes manifests for the app
+│   │   ├── ErrorBoundary.tsx     Top-level render error boundary
+│   │   │
+│   │   ├── auth/
+│   │   │   └── LoginForm.tsx
+│   │   │
+│   │   ├── chat/
+│   │   │   ├── MessageBubble.tsx     User/assistant message rendering
+│   │   │   ├── ToolCallCard.tsx      Tool call streaming + result display
+│   │   │   ├── MarkdownContent.tsx   Markdown renderer (marked + sanitized)
+│   │   │   └── WelcomeMessage.tsx    Empty-conversation landing
+│   │   │
+│   │   ├── layout/
+│   │   │   ├── Header.tsx             Model selector, theme, sidebar toggle, user menu
+│   │   │   ├── ChatPanel.tsx          Message list + input area
+│   │   │   └── GenerationDefaultsPopover.tsx  DFT param quick-set popover
+│   │   │
+│   │   ├── science/
+│   │   │   ├── StructureViewer.tsx    3Dmol.js crystal structure viewer
+│   │   │   └── PredictionSummary.tsx  ML k-point prediction result display
+│   │   │
+│   │   ├── shell/
+│   │   │   ├── AppShell.tsx           Root layout: sidebar + center + mobile
+│   │   │   ├── SidebarHost.tsx        Conversation/workspace sidebar swap
+│   │   │   ├── TabStrip.tsx            Tab bar
+│   │   │   └── TabContentHost.tsx      Tab content router
+│   │   │
+│   │   ├── sidebar/
+│   │   │   ├── ConversationSidebar.tsx  Conversation list + new conversation button
+│   │   │   └── WorkspaceSidebar.tsx     Workspace file tree + new/upload buttons
+│   │   │
+│   │   ├── views/
+│   │   │   ├── ConversationView.tsx    ChatPanel wrapper
+│   │   │   ├── FileView.tsx            FileBrowser + FileViewer side by side
+│   │   │   ├── StructureView.tsx       StructureViewer (full pane)
+│   │   │   └── WelcomeView.tsx         Empty state
+│   │   │
+│   │   ├── workspace/
+│   │   │   ├── FileBrowser.tsx         Tree view + search + context menus
+│   │   │   ├── FileViewer.tsx          Viewer router + lazy-load boundary
+│   │   │   ├── MilkdownEditor.tsx     Markdown editor (lazy-loaded)
+│   │   │   ├── MonacoEditor.tsx        Code editor (lazy-loaded)
+│   │   │   ├── PdfViewer.tsx           PDF renderer (lazy-loaded)
+│   │   │   └── ImageViewer.tsx         Image renderer (lazy-loaded)
+│   │   │
+│   │   └── ui/
+│   │       ├── Toast.tsx               Notification component
+│   │       ├── Skeleton.tsx            Loading placeholder
+│   │       ├── ConnectionBanner.tsx    WebSocket status banner
+│   │       └── MermaidDiagram.tsx      Mermaid.js renderer
+│   │
+│   └── pages/
+│       ├── Login.tsx
+│       ├── Workspace.tsx             Thin wrapper: <AppShell />
+│       └── Settings.tsx              API keys, defaults, theme (lazy-loaded)
+│
+├── k8s/                              Core Kubernetes manifests (namespace, RBAC, web-app)
 ├── deploy/
-│   ├── docker/                 # Dockerfiles
-│   └── kind-config.yaml        # Kind cluster config
-├── data/                       # Persisted data (gitignored)
-│   ├── goldilocks.db           # SQLite database
-│   ├── homes/                  # Per-user home directories
-│   └── logs/                   # Bridge + pod manager logs
-└── Tiltfile                    # Dev orchestration
+│   ├── docker/
+│   │   ├── Dockerfile.web.dev        Dev web app (tsx watch + Vite)
+│   │   └── Dockerfile.agent          Agent container (pi installed, sleep infinity)
+│   └── kind-config.yaml              Kind cluster config with hostPath bind-mounts
+├── dashboard/                        Headlamp ops dashboard (in-cluster)
+│   ├── k8s/headlamp.yaml
+│   └── k8s/headlamp-rbac.yaml
+├── skills/
+│   └── goldilocks/SKILL.md           Pi agent skill definition (DFT domain knowledge)
+└── Tiltfile                           Dev orchestration: builds, live_update, port-forwards
 ```
+
+## Code Conventions
+
+### TypeScript
+
+- Strict mode enabled
+- Prefer explicit types over `any`
+- Use `unknown` for external/untrusted data, narrow with type guards
+- Prefer named exports over default exports for stores and hooks
+
+### React
+
+- Functional components with hooks only
+- Co-locate component-specific helpers/types within the file
+- Use `useCallback` / `useMemo` for functions/values passed as props to prevent unnecessary re-renders
+- Use `lazy` + `Suspense` for route-level and heavy component-level splits
+
+### State management
+
+- Stores own one domain; no store reaches into another store's internals
+- Cross-store effects live in the component that triggers them
+- Auth transitions use `resetUserScopedFrontendState()` from `session-reset.ts`
+
+### Styling
+
+- Tailwind CSS utility classes throughout
+- No inline styles except for dynamic values (e.g., positioning from JS)
+- Component-scoped styles via Tailwind classes only

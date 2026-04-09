@@ -41,10 +41,10 @@ Open a conversation. Switches the pi session and loads message history.
 
 ### prompt
 
-Send a message to the agent. Only valid after `ready` is received.
+Send a message to the agent. Only valid after `ready` is received. Optionally attach workspace file paths as context.
 
 ```json
-{"type": "prompt", "text": "Hello, world!"}
+{"type": "prompt", "text": "Hello, world!", "files": ["structure.cif"]}
 ```
 
 ### abort
@@ -73,17 +73,30 @@ Session is open and ready for prompts. Includes message history if the conversat
   "type": "ready",
   "conversationId": "uuid",
   "messages": [
-    {"role": "user", "text": "hello"},
-    {"role": "assistant", "text": "Hi!", "toolCalls": [
-      {"toolCallId": "tc_1", "toolName": "bash", "args": {"command": "ls"}, "result": "file.txt\n", "isError": false}
-    ]}
+    {
+      "role": "user",
+      "text": "hello"
+    },
+    {
+      "role": "assistant",
+      "text": "Hi! Let me look at your structure.",
+      "toolCalls": [
+        {
+          "toolCallId": "tc_1",
+          "toolName": "bash",
+          "args": {"command": "ls"},
+          "result": "file.txt\n",
+          "isError": false
+        }
+      ]
+    }
   ]
 }
 ```
 
 ### text_delta
 
-Streaming text content from the assistant.
+Streaming text content from the assistant. Appended to the current assistant message.
 
 ```json
 {"type": "text_delta", "delta": "Hello "}
@@ -91,7 +104,7 @@ Streaming text content from the assistant.
 
 ### thinking_delta
 
-Streaming thinking/reasoning content.
+Streaming thinking/reasoning content from the model. Appended to the thinking block.
 
 ```json
 {"type": "thinking_delta", "delta": "Let me consider..."}
@@ -99,13 +112,7 @@ Streaming thinking/reasoning content.
 
 ### tool_start
 
-A tool call has started. Sent when the model begins generating tool arguments.
-
-```json
-{"type": "tool_start", "toolName": "write", "toolCallId": "tc_1", "args": {}}
-```
-
-Sent again when arguments are fully parsed (with populated `args`):
+A tool call has been fully parsed (arguments are available). Sent once per tool call when argument generation completes.
 
 ```json
 {"type": "tool_start", "toolName": "write", "toolCallId": "tc_1", "args": {"file_path": "chess.py", "content": "..."}}
@@ -113,7 +120,7 @@ Sent again when arguments are fully parsed (with populated `args`):
 
 ### tool_update
 
-Streaming tool argument content (e.g., file content being written).
+Streaming tool argument content — e.g., file content being written character by character.
 
 ```json
 {"type": "tool_update", "toolCallId": "tc_1", "content": "import chess\n"}
@@ -167,6 +174,12 @@ stateDiagram-v2
     disconnected --> [*]: conversationId cleared
 ```
 
+## Workspace Refresh
+
+After a `tool_end` for `write`, `edit`, or `bash` tools, and after `agent_end`, the frontend schedules a file store refresh (250ms debounce). This keeps the workspace file tree current without polling.
+
 ## Multi-Tab Behaviour
 
 Multiple browser tabs for the same user share the same Bridge on the server. All tabs receive all events from the Bridge. If tab A sends a prompt while tab B is viewing the same conversation, both tabs see the response streaming.
+
+The frontend uses a generation counter in `useAgent` to discard messages from stale connections — if the user switches conversations rapidly, old WebSocket messages for the previous conversation are dropped.
