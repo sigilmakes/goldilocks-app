@@ -1,46 +1,38 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: web-app
+  name: agent-service
   namespace: goldilocks
   labels:
-    app.kubernetes.io/name: web-app
-    app.kubernetes.io/component: frontend
+    app.kubernetes.io/name: agent-service
+    app.kubernetes.io/component: agent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: web-app
+      app: agent-service
   template:
     metadata:
       labels:
-        app: web-app
-        role: frontend
+        app: agent-service
+        role: agent-service
     spec:
       serviceAccountName: agent-manager
       containers:
-        - name: web-app
-          image: goldilocks-web
+        - name: agent-service
+          image: goldilocks-agent-service
           ports:
-            - containerPort: 3000
+            - containerPort: 3001
               name: http
-            - containerPort: 5173
-              name: vite
           env:
             - name: NODE_ENV
               value: development
-            - name: PORT
-              value: "3000"
-            - name: K8S_NAMESPACE
-              value: goldilocks
             - name: DATA_DIR
               value: /data
+            - name: K8S_NAMESPACE
+              value: goldilocks
             - name: AGENT_IMAGE
               value: goldilocks-agent:latest
-            - name: AGENT_SERVICE_URL
-              value: http://agent-service:3001
-            - name: AGENT_SERVICE_WS_URL
-              value: ws://agent-service:3001/ws
             - name: AGENT_SERVICE_SHARED_SECRET
               valueFrom:
                 secretKeyRef:
@@ -56,7 +48,6 @@ spec:
                 secretKeyRef:
                   name: app-secrets
                   key: encryption-key
-
           volumeMounts:
             - name: data
               mountPath: /data
@@ -73,12 +64,6 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /api/health
-              port: http
-            initialDelaySeconds: 15
-            periodSeconds: 30
       volumes:
         - name: data
           hostPath:
@@ -88,15 +73,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: web-app
+  name: agent-service
   namespace: goldilocks
 spec:
   selector:
-    app: web-app
+    app: agent-service
   ports:
-    - port: 3000
-      targetPort: 3000
+    - port: 3001
+      targetPort: 3001
       name: http
-    - port: 5173
-      targetPort: 5173
-      name: vite
