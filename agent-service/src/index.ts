@@ -13,6 +13,7 @@ import {
   internalAuthFailed,
   promptFinished,
   promptStarted,
+  recordTtft,
   websocketErrored,
 } from './metrics.js';
 
@@ -28,6 +29,7 @@ interface InternalWsState {
   receivedTextDelta: boolean;
   currentToolCallId: string | null;
   toolCallIdMap: Map<string, string>;
+  promptSentAt: number | null;
 }
 
 interface GatewayAuthMessage {
@@ -53,9 +55,17 @@ function mapSessionEvent(event: SessionEvent, ws: WebSocket, state: InternalWsSt
       if (!delta) break;
 
       if (delta.type === 'text_delta' && delta.delta) {
+        if (state.promptSentAt !== null) {
+          recordTtft(Date.now() - state.promptSentAt);
+          state.promptSentAt = null;
+        }
         state.receivedTextDelta = true;
         send(ws, { type: 'text_delta', delta: delta.delta });
       } else if (delta.type === 'thinking_delta' && delta.delta) {
+        if (state.promptSentAt !== null) {
+          recordTtft(Date.now() - state.promptSentAt);
+          state.promptSentAt = null;
+        }
         send(ws, { type: 'thinking_delta', delta: delta.delta });
       } else if (delta.type === 'toolcall_start') {
         const tc = delta.partial ?? delta.toolCall;
@@ -94,6 +104,11 @@ function mapSessionEvent(event: SessionEvent, ws: WebSocket, state: InternalWsSt
     }
 
     case 'message_end': {
+      if (state.promptSentAt !== null) {
+        recordTtft(Date.now() - state.promptSentAt);
+        state.promptSentAt = null;
+      }
+
       if (!state.receivedTextDelta) {
         const msg = event.message as {
           role?: string;
@@ -244,6 +259,35 @@ app.get('/api/metrics', (_req, res) => {
   res.json(getMetrics());
 });
 
+app.post('/internal/prewarm', verifyInternalRequest, async (req: InternalAuthRequest, res: Response) => {
+  const { conversationId } = req.body as { conversationId?: string };
+  if (!conversationId) {
+    res.status(400).json({ error: 'conversationId is required' });
+    return;
+  }
+
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      'SELECT pi_session_id FROM conversations WHERE id = ? AND user_id = ?'
+    ).get(conversationId, req.internalUserId) as { pi_session_id: string | null } | undefined;
+
+    if (!row) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+
+    if (row.pi_session_id) {
+      await sessionManager.switchSession(req.internalUserId!, conversationId, row.pi_session_id);
+    }
+
+    res.json({ ok: true, conversationId });
+  } catch (err) {
+    console.error('Prewarm failed:', err);
+    res.status(500).json({ error: 'Prewarm failed' });
+  }
+});
+
 app.get('/internal/models', verifyInternalRequest, async (req: InternalAuthRequest, res: Response) => {
   try {
     const result = await sessionManager.getAvailableModels(req.internalUserId!);
@@ -299,6 +343,7 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
     receivedTextDelta: false,
     currentToolCallId: null,
     toolCallIdMap: new Map(),
+    promptSentAt: null as number | null,
   };
 
   const cleanup = () => {
@@ -376,6 +421,7 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
           }
 
           state.isProcessing = true;
+          state.promptSentAt = Date.now();
           promptStarted();
           const db = getDb();
           const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(state.conversationId) as { title: string } | undefined;

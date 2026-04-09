@@ -5,7 +5,10 @@ const metrics = {
   promptCount: 0,
   internalAuthFailures: 0,
   websocketErrors: 0,
+  ttftSamples: [] as number[],
 };
+
+const TTFT_MAX_SAMPLES = 1000;
 
 export function gatewayConnectionOpened(): void {
   metrics.gatewayConnections += 1;
@@ -25,6 +28,13 @@ export function promptFinished(): void {
   metrics.activePrompts = Math.max(0, metrics.activePrompts - 1);
 }
 
+export function recordTtft(durationMs: number): void {
+  metrics.ttftSamples.push(durationMs);
+  if (metrics.ttftSamples.length > TTFT_MAX_SAMPLES) {
+    metrics.ttftSamples.shift();
+  }
+}
+
 export function internalAuthFailed(): void {
   metrics.internalAuthFailures += 1;
 }
@@ -34,5 +44,22 @@ export function websocketErrored(): void {
 }
 
 export function getMetrics() {
-  return { ...metrics };
+  const samples = metrics.ttftSamples;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const p50 = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0;
+  const p95 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.95)] : 0;
+  const p99 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.99)] : 0;
+
+  return {
+    gatewayConnections: metrics.gatewayConnections,
+    activeGatewayConnections: metrics.activeGatewayConnections,
+    activePrompts: metrics.activePrompts,
+    promptCount: metrics.promptCount,
+    internalAuthFailures: metrics.internalAuthFailures,
+    websocketErrors: metrics.websocketErrors,
+    ttftCount: samples.length,
+    ttftP50Ms: p50,
+    ttftP95Ms: p95,
+    ttftP99Ms: p99,
+  };
 }

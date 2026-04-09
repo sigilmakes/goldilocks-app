@@ -9,6 +9,7 @@ import {
   recordBrowserConnectionClosed,
   recordBrowserConnectionOpened,
   recordRelayError,
+  recordTtft,
 } from './relay-metrics.js';
 import type { ClientMessage, ServerMessage } from '../shared/types.js';
 
@@ -22,6 +23,9 @@ interface GatewayToAgentMessage {
   userId: string;
   gatewayToken: string;
 }
+
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = 60_000;
 
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
@@ -40,11 +44,27 @@ export function setupWebSocket(wss: WebSocketServer): void {
     let agentReady = false;
     let agentGeneration = 0;
     const pendingMessages: ClientMessage[] = [];
+    let promptSentAt: number | null = null;
+
+    // Browser keepalive
+    let browserAlive = true;
+    const browserHeartbeat = setInterval(() => {
+      if (browserWs.readyState !== WebSocket.OPEN) {
+        clearInterval(browserHeartbeat);
+        return;
+      }
+      browserWs.ping();
+    }, HEARTBEAT_INTERVAL_MS);
+
+    browserWs.on('pong', () => {
+      browserAlive = true;
+    });
 
     const cleanupAgentConnection = () => {
       agentGeneration += 1;
       agentReady = false;
       pendingMessages.length = 0;
+      promptSentAt = null;
       if (agentWs) {
         const ws = agentWs;
         agentWs = null;
@@ -84,6 +104,20 @@ export function setupWebSocket(wss: WebSocketServer): void {
           agentWs = nextAgentWs;
           recordAgentConnectionOpened();
 
+          // Agent keepalive
+          const agentHeartbeat = setInterval(() => {
+            if (nextAgentWs.readyState !== WebSocket.OPEN) {
+              clearInterval(agentHeartbeat);
+              return;
+            }
+            nextAgentWs.ping();
+          }, HEARTBEAT_INTERVAL_MS);
+
+          let agentAlive = true;
+          nextAgentWs.on('pong', () => {
+            agentAlive = true;
+          });
+
           nextAgentWs.on('open', () => {
             if (connectionGeneration !== agentGeneration) return;
             const authMessage: GatewayToAgentMessage = {
@@ -118,11 +152,25 @@ export function setupWebSocket(wss: WebSocketServer): void {
               return;
             }
 
+            // TTFT: record time from prompt send to first content delta
+            if (promptSentAt !== null) {
+              if (agentMsg.type === 'text_delta' || agentMsg.type === 'thinking_delta' || agentMsg.type === 'message_end') {
+                recordTtft(Date.now() - promptSentAt);
+                promptSentAt = null;
+              }
+            }
+
             send(browserWs, agentMsg);
           });
 
           nextAgentWs.on('close', () => {
-            if (connectionGeneration !== agentGeneration) return;
+            clearInterval(agentHeartbeat);
+            if (connectionGeneration !== agentGeneration) {
+              // Stale socket — counter already decremented by cleanupAgentConnection()
+              return;
+            }
+            // Spontaneous disconnect — counter was not decremented yet
+            recordAgentConnectionClosed();
             agentReady = false;
             agentWs = null;
             if (browserWs.readyState === WebSocket.OPEN) {
@@ -148,6 +196,11 @@ export function setupWebSocket(wss: WebSocketServer): void {
         return;
       }
 
+      // Track prompt send time for TTFT
+      if (msg.type === 'prompt') {
+        promptSentAt = Date.now();
+      }
+
       if (!agentWs || agentWs.readyState !== WebSocket.OPEN || !agentReady) {
         pendingMessages.push(msg);
         return;
@@ -157,10 +210,12 @@ export function setupWebSocket(wss: WebSocketServer): void {
     });
 
     browserWs.on('close', () => {
+      clearInterval(browserHeartbeat);
       recordBrowserConnectionClosed();
       cleanupAgentConnection();
     });
     browserWs.on('error', (err) => {
+      clearInterval(browserHeartbeat);
       console.error('Browser WebSocket error:', err);
       recordRelayError();
       cleanupAgentConnection();
