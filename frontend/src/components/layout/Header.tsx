@@ -25,11 +25,13 @@ export default function Header({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Fetch models and API keys on mount
+  // Fetch settings first (model selection depends on preferred model),
+  // then models and API keys in parallel
   useEffect(() => {
-    fetch();
-    fetchApiKeys();
-    fetchSettings();
+    fetchSettings().then(() => {
+      fetch();
+      fetchApiKeys();
+    });
   }, [fetch, fetchApiKeys, fetchSettings]);
 
   useEffect(() => {
