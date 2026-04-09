@@ -157,11 +157,12 @@ if [[ -n "$TOKEN" ]]; then
     fail "GET /api/auth/me → wrong response: $ME"
   fi
 
-  WRONG=$(curl -sf "$BASE/api/auth/me" -H "Authorization: Bearer wrong-token")
-  if echo "$WRONG" | jq -r '.error // ""' | grep -qi error; then
+  WRONG=$(curl -s "$BASE/api/auth/me" -H "Authorization: Bearer wrong-token" 2>/dev/null || true)
+  WRONG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/auth/me" -H "Authorization: Bearer wrong-token" 2>/dev/null || echo "000")
+  if [[ "$WRONG_STATUS" == "401" ]]; then
     pass "invalid token → 401"
   else
-    fail "invalid token should return error: $WRONG"
+    fail "invalid token should return 401, got: $WRONG_STATUS"
   fi
 fi
 
@@ -290,7 +291,7 @@ else
   fi
 
   KEYS=$(curl -sf "$BASE/api/settings/api-keys" -H "Authorization: Bearer $TOKEN")
-  if echo "$KEYS" | jq -r '.keys' >/dev/null 2>&1; then
+  if echo "$KEYS" | jq -r '.apiKeys' >/dev/null 2>&1; then
     pass "GET /api/settings/api-keys → key list returned"
   else
     fail "api-keys failed: $KEYS"

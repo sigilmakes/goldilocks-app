@@ -14,6 +14,11 @@ describe('Files', () => {
     await server.stop();
   });
 
+  const authHeaders = (u: TestUser) => ({
+    'Content-Type': 'application/json',
+    authorization: server.authHeader(u),
+  });
+
   // ── GET /api/files ───────────────────────────────────────────────────────
 
   it('lists the workspace file tree (empty for new user)', async () => {
@@ -31,14 +36,29 @@ describe('Files', () => {
     expect(res.status).toBe(401);
   });
 
-  it('searches files by query', async () => {
-    const res = await fetch(`${server.baseUrl}/api/files?search=test`, {
+  it('searches files by query — only matching files appear', async () => {
+    // Write two files with different names
+    await fetch(`${server.baseUrl}/api/files/searchable-foo.txt`, {
+      method: 'PUT', headers: authHeaders(user),
+      body: JSON.stringify({ content: 'foo content' }),
+    });
+    await fetch(`${server.baseUrl}/api/files/searchable-bar.txt`, {
+      method: 'PUT', headers: authHeaders(user),
+      body: JSON.stringify({ content: 'bar content' }),
+    });
+
+    const res = await fetch(`${server.baseUrl}/api/files?search=foo`, {
       headers: { authorization: server.authHeader(user) },
     });
 
     expect(res.status).toBe(200);
-    const json = await res.json() as { entries: unknown[] };
-    expect(Array.isArray(json.entries)).toBe(true);
+    const json = await res.json() as { entries: { name: string; path: string }[] };
+    // Should find only the -foo file, not the -bar file
+    const paths = json.entries.map(e => e.path ?? e.name);
+    const hasFoo = paths.some(p => p.includes('foo'));
+    const hasBar = paths.some(p => p.includes('bar'));
+    expect(hasFoo).toBe(true);
+    expect(hasBar).toBe(false);
   });
 
   // ── PUT /api/files/:path — create file ──────────────────────────────────
@@ -46,10 +66,7 @@ describe('Files', () => {
   it('creates a file at the given path', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/test-file.txt`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      headers: authHeaders(user),
       body: JSON.stringify({ content: 'Hello, Goldilocks!' }),
     });
 
@@ -62,11 +79,7 @@ describe('Files', () => {
 
   it('creates parent directories automatically', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/subdir/nested/file.txt`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'PUT', headers: authHeaders(user),
       body: JSON.stringify({ content: 'nested content' }),
     });
 
@@ -82,17 +95,12 @@ describe('Files', () => {
       headers: { authorization: server.authHeader(user) },
     });
 
-    // Express resolves the path, so it becomes /api/secret → 404
     expect(res.status).toBe(404);
   });
 
   it('rejects files without content field', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/no-content.txt`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'PUT', headers: authHeaders(user),
       body: JSON.stringify({}),
     });
 
@@ -101,14 +109,10 @@ describe('Files', () => {
 
   // ── GET /api/files/:path — read file ────────────────────────────────────
 
-  it('reads a file that was just written', async () => {
+  it('reads a file that was just written — content roundtrips', async () => {
     const path = `read-test-${Date.now()}.txt`;
     await fetch(`${server.baseUrl}/api/files/${path}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'PUT', headers: authHeaders(user),
       body: JSON.stringify({ content: 'File content here' }),
     });
 
@@ -139,6 +143,23 @@ describe('Files', () => {
     expect(res.status).toBe(404);
   });
 
+  it('isolates files between users', async () => {
+    // User A writes a file
+    const path = `isolation-test-${Date.now()}.txt`;
+    await fetch(`${server.baseUrl}/api/files/${path}`, {
+      method: 'PUT', headers: authHeaders(user),
+      body: JSON.stringify({ content: 'private data' }),
+    });
+
+    // User B cannot see User A's file
+    const user2 = await server.registerUser({ email: `other-${Date.now()}@example.com` });
+    const res = await fetch(`${server.baseUrl}/api/files/${path}`, {
+      headers: { authorization: server.authHeader(user2) },
+    });
+
+    expect(res.status).toBe(404);
+  });
+
   // ── POST /api/files/upload ───────────────────────────────────────────────
 
   it('uploads a file with base64 content', async () => {
@@ -146,11 +167,7 @@ describe('Files', () => {
     const b64 = Buffer.from(content).toString('base64');
 
     const res = await fetch(`${server.baseUrl}/api/files/upload`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'POST', headers: authHeaders(user),
       body: JSON.stringify({ filename: 'uploaded.txt', content: b64 }),
     });
 
@@ -163,11 +180,7 @@ describe('Files', () => {
 
   it('rejects upload without filename', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/upload`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'POST', headers: authHeaders(user),
       body: JSON.stringify({ content: Buffer.from('hello').toString('base64') }),
     });
 
@@ -176,11 +189,7 @@ describe('Files', () => {
 
   it('rejects upload without content', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/upload`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'POST', headers: authHeaders(user),
       body: JSON.stringify({ filename: 'no-content.txt' }),
     });
 
@@ -189,11 +198,7 @@ describe('Files', () => {
 
   it('rejects hidden filenames', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/upload`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'POST', headers: authHeaders(user),
       body: JSON.stringify({ filename: '.env', content: Buffer.from('SECRET=123').toString('base64') }),
     });
 
@@ -202,29 +207,30 @@ describe('Files', () => {
 
   // ── POST /api/files/mkdir ───────────────────────────────────────────────
 
-  it('creates a directory', async () => {
+  it('creates a directory that appears in tree listings', async () => {
+    const dirName = `listing-dir-${Date.now()}`;
     const res = await fetch(`${server.baseUrl}/api/files/mkdir`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
-      body: JSON.stringify({ path: 'new-directory' }),
+      method: 'POST', headers: authHeaders(user),
+      body: JSON.stringify({ path: dirName }),
     });
 
     expect(res.status).toBe(200);
     const json = await res.json() as { ok: boolean; path: string };
     expect(json.ok).toBe(true);
-    expect(json.path).toBe('new-directory');
+
+    // Verify the directory appears in the tree listing
+    const tree = await fetch(`${server.baseUrl}/api/files`, {
+      headers: { authorization: server.authHeader(user) },
+    });
+    const treeJson = await tree.json() as { entries: { name: string; type: string }[] };
+    const dirEntry = treeJson.entries.find(e => e.name === dirName);
+    expect(dirEntry).toBeTruthy();
+    expect(dirEntry!.type).toBe('dir');
   });
 
   it('rejects mkdir without path', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/mkdir`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'POST', headers: authHeaders(user),
       body: JSON.stringify({}),
     });
 
@@ -233,11 +239,7 @@ describe('Files', () => {
 
   it('rejects mkdir with a hidden directory name', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/mkdir`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'POST', headers: authHeaders(user),
       body: JSON.stringify({ path: '.hidden' }),
     });
 
@@ -246,39 +248,41 @@ describe('Files', () => {
 
   // ── POST /api/files/move ────────────────────────────────────────────────
 
-  it('moves a file to a new path', async () => {
-    const path = `move-test-${Date.now()}.txt`;
-    await fetch(`${server.baseUrl}/api/files/${path}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+  it('moves a file — old path 404s, new path reads back', async () => {
+    const originalPath = `move-src-${Date.now()}.txt`;
+    const newPath = `move-dst-${Date.now()}.txt`;
+    await fetch(`${server.baseUrl}/api/files/${originalPath}`, {
+      method: 'PUT', headers: authHeaders(user),
       body: JSON.stringify({ content: 'move me' }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/files/move`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
-      body: JSON.stringify({ from: path, to: `moved-${path}` }),
+      method: 'POST', headers: authHeaders(user),
+      body: JSON.stringify({ from: originalPath, to: newPath }),
     });
 
     expect(res.status).toBe(200);
     const json = await res.json() as { ok: boolean; from: string; to: string };
     expect(json.ok).toBe(true);
-    expect(json.to).toBe(`moved-${path}`);
+
+    // Old path should 404
+    const oldRes = await fetch(`${server.baseUrl}/api/files/${originalPath}`, {
+      headers: { authorization: server.authHeader(user) },
+    });
+    expect(oldRes.status).toBe(404);
+
+    // New path should read back correctly
+    const newRes = await fetch(`${server.baseUrl}/api/files/${newPath}`, {
+      headers: { authorization: server.authHeader(user) },
+    });
+    expect(newRes.status).toBe(200);
+    const newJson = await newRes.json() as { content: string };
+    expect(newJson.content).toBe('move me');
   });
 
   it('rejects move with missing from field', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/move`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'POST', headers: authHeaders(user),
       body: JSON.stringify({ to: 'somewhere.txt' }),
     });
 
@@ -287,14 +291,10 @@ describe('Files', () => {
 
   // ── DELETE /api/files/:path ─────────────────────────────────────────────
 
-  it('deletes a file', async () => {
+  it('deletes a file — subsequent read returns 404', async () => {
     const path = `delete-test-${Date.now()}.txt`;
     await fetch(`${server.baseUrl}/api/files/${path}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'PUT', headers: authHeaders(user),
       body: JSON.stringify({ content: 'delete me' }),
     });
 
@@ -307,7 +307,7 @@ describe('Files', () => {
     const json = await res.json() as { ok: boolean };
     expect(json.ok).toBe(true);
 
-    // Verify the file is actually gone — read should 404
+    // Verify the file is actually gone
     const readRes = await fetch(`${server.baseUrl}/api/files/${path}`, {
       headers: { authorization: server.authHeader(user) },
     });
@@ -326,15 +326,14 @@ describe('Files', () => {
 
   // ── GET /api/files/:path/raw ────────────────────────────────────────────
 
-  it('downloads a file as raw binary', async () => {
+  it('downloads a file as raw binary — bytes roundtrip', async () => {
     const path = `binary-test-${Date.now()}.bin`;
-    await fetch(`${server.baseUrl}/api/files/${path}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
-      body: JSON.stringify({ content: Buffer.from([0x00, 0xff, 0x42]).toString('base64') }),
+    const originalBytes = Buffer.from([0x00, 0xff, 0x42, 0x80, 0x01]);
+
+    // Upload via the upload route (base64, preserves raw bytes)
+    await fetch(`${server.baseUrl}/api/files/upload`, {
+      method: 'POST', headers: authHeaders(user),
+      body: JSON.stringify({ filename: path, content: originalBytes.toString('base64') }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/files/${path}/raw`, {
@@ -343,16 +342,16 @@ describe('Files', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/octet-stream');
+
+    // Verify the actual bytes match
+    const body = Buffer.from(await res.arrayBuffer());
+    expect(body).toEqual(originalBytes);
   });
 
   it('sets Content-Disposition header with filename', async () => {
     const path = `dispo-test-${Date.now()}.txt`;
     await fetch(`${server.baseUrl}/api/files/${path}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        authorization: server.authHeader(user),
-      },
+      method: 'PUT', headers: authHeaders(user),
       body: JSON.stringify({ content: 'hello' }),
     });
 

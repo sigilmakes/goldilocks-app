@@ -4,18 +4,22 @@
  * Every test suite gets its own server instance with:
  *   - Fresh SQLite DB
  *   - Stubbed sessionManager (no k8s needed)
- *   - File operations use the local filesystem (no k8s exec)
+ *   - File operations use the local filesystem with per-user isolation
  *   - Real Express, real routes, real DB writes
  *
- * Usage:
- *   const { baseUrl, stop, registerUser, authHeader } = await createTestServer();
- *   const res = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeader(user) });
- *   await stop();
+ * Fidelity goals:
+ *   - Per-user file isolation (each user gets a subdirectory, like a pod/PVC)
+ *   - `find` output matches production format (tab-separated path/size/mtime/type)
+ *   - Binary-safe reads/writes (Buffer roundtrips, not UTF-8 force-cast)
+ *   - Search filtering works via the same command-argument parsing
  */
 
 import { createServer } from 'http';
 import { AddressInfo } from 'net';
-import { mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync, statSync, renameSync, existsSync } from 'fs';
+import {
+  mkdirSync, rmSync, readFileSync, writeFileSync,
+  readdirSync, statSync, renameSync, existsSync,
+} from 'fs';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
@@ -35,28 +39,23 @@ export interface TestServer {
   authHeader: (user: TestUser) => string;
 }
 
-/** Derive the project root from this file's location (test/api/helpers/test-server.ts) */
 function projectRoot(): string {
   return fileURLToPath(new URL('../../../', import.meta.url));
 }
 
 /**
- * Create a stream that emits `data` events with the given content (as Buffer),
- * then emits `end`. The route's `execCommand()` reads via:
- *   exec.stdout.on('data', chunk => chunks.push(chunk))
- *   exec.stdout.on('end', () => resolve(Buffer.concat(chunks).toString()))
- *
- * So we must emit actual Buffer data before 'end' for the route to see content.
+ * Create a stream that emits `data` events with Buffer content, then `end`.
+ * If content is null, emits an `error` event instead (simulates command failure
+ * like cat on a non-existent file).
  */
-function makeStream(content: string | null): EventEmitter {
+function makeStream(content: Buffer | null): EventEmitter {
   const emitter = new EventEmitter();
   if (content !== null) {
     setImmediate(() => {
-      emitter.emit('data', Buffer.from(content));
+      emitter.emit('data', content);
       emitter.emit('end');
     });
   } else {
-    // null = error / missing — emit an error event so execInPod rejects
     setImmediate(() => {
       emitter.emit('error', new Error('No such file or directory'));
     });
@@ -64,22 +63,43 @@ function makeStream(content: string | null): EventEmitter {
   return emitter;
 }
 
+/** Helper to create a stream from a UTF-8 string */
+function makeStringStream(content: string): EventEmitter {
+  return makeStream(Buffer.from(content, 'utf8'));
+}
+
 /**
- * Recursively list files under a directory, returning paths relative to base.
+ * Per-user directory under workspaceRoot.
+ * Mirrors the real app where each user gets their own pod with a PVC.
  */
-function listFiles(base: string, prefix: string = ''): string[] {
+function userDir(workspaceRoot: string, userId: string): string {
+  return join(workspaceRoot, userId);
+}
+
+/**
+ * List files under a directory, returning paths relative to base.
+ * Skips hidden files/dirs (starting with .) — matches the production
+ * find command's `-not -path "/home/node/.*" -not -name ".*"`.
+ */
+function listFiles(base: string, prefix: string = '', searchTerm?: string): string[] {
   const results: string[] = [];
   const dir = join(base, prefix);
   if (!existsSync(dir)) return results;
 
   for (const entry of readdirSync(dir)) {
+    // Skip hidden files/dirs — production find excludes them
+    if (entry.startsWith('.')) continue;
+
     const rel = prefix ? `${prefix}/${entry}` : entry;
     const full = join(dir, entry);
     const stat = statSync(full);
+
     if (stat.isDirectory()) {
       results.push(rel + '/');
-      results.push(...listFiles(base, rel));
+      results.push(...listFiles(base, rel, searchTerm));
     } else {
+      // If there's a search term, only include matching filenames
+      if (searchTerm && !entry.toLowerCase().includes(searchTerm.toLowerCase())) continue;
       results.push(rel);
     }
   }
@@ -87,14 +107,48 @@ function listFiles(base: string, prefix: string = ''): string[] {
 }
 
 /**
+ * Produce find output in production format: tab-separated
+ * `fullPath\tsize\tmtime\ttype`
+ *
+ * Matches the route's parsing:
+ *   path: fullPath.replace('/home/node/', '')
+ *   type: 'directory' → 'dir', else 'file'
+ *   size: parseInt(size) || 0
+ *   modified: (parseInt(mtime) || 0) * 1000
+ */
+function formatFindOutput(userBase: string, searchTerm?: string): string {
+  const files = listFiles(userBase, '', searchTerm);
+  return files.map(rel => {
+    const full = join(userBase, rel);
+    let size = 0;
+    let mtime = 0;
+    let type = 'regular file';
+
+    try {
+      // Remove trailing / for stat — dirs are listed with trailing /
+      const statPath = rel.endsWith('/') ? full.slice(0, -1) : full;
+      if (existsSync(statPath)) {
+        const s = statSync(statPath);
+        size = s.size;
+        mtime = Math.floor(s.mtimeMs / 1000);
+        type = s.isDirectory() ? 'directory' : 'regular file';
+      }
+    } catch { /* ignore */ }
+
+    // Production uses /home/node/ as prefix
+    return `/home/node/${rel}\t${size}\t${mtime}\t${type}`;
+  }).join('\n');
+}
+
+/**
  * Parse a shell command array and figure out what file operation it wants.
- * Returns a result object the stub can act on.
  */
 function parseCommand(command: string[]): {
   op: 'cat' | 'echo' | 'rm' | 'mv' | 'mkdir' | 'find' | 'ls' | 'unknown';
   path?: string;
   path2?: string;
   content?: string;
+  searchTerm?: string;
 } {
   const cmd = command.join(' ');
 
@@ -128,12 +182,18 @@ function parseCommand(command: string[]): {
     return { op: 'mkdir', path: mkdirMatch[1] };
   }
 
-  // find /home/node/...
-  if (cmd.includes('find /home/node/')) {
-    return { op: 'find' };
+  if (cmd.includes('find /home/node')) {
+    // Parse -name "*SEARCH*" or -name *SEARCH* pattern from the find command.
+    // The route template: -name "*${search}*"
+    // The search term is between the asterisks.
+    const searchMatch = cmd.match(/-name\s+["']?\*([^*]+)\*["']?/);
+    return {
+      op: 'find',
+      searchTerm: searchMatch ? searchMatch[1] : undefined,
+    };
   }
 
-  // ls -la /home/node/PATH (for GET /:path existence check)
+  // ls -la /home/node/PATH
   const lsMatch = cmd.match(/ls (?:-[a-z]+ )?\/home\/node\/(.+?)(?:\s|$)/);
   if (lsMatch) {
     return { op: 'ls', path: lsMatch[1] };
@@ -150,14 +210,12 @@ async function createTestServer(): Promise<TestServer> {
 
   const root = projectRoot();
 
-  // Set env vars BEFORE importing app — CONFIG reads them at access time
   process.env.DATA_DIR = dataDir;
   process.env.WORKSPACE_ROOT = workspaceRoot;
   process.env.JWT_SECRET = 'test-jwt-not-for-prod';
   process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
   process.env.NODE_ENV = 'test';
 
-  // Stub sessionManager BEFORE routes are loaded
   const { sessionManager } = await import(`file://${root}server/src/agent/sessions.js`);
 
   const stubPodManager = {
@@ -165,117 +223,117 @@ async function createTestServer(): Promise<TestServer> {
 
     async execInPod(userId: string, command: string[]) {
       const parsed = parseCommand(command);
+      const userBase = userDir(workspaceRoot, userId);
 
       switch (parsed.op) {
         case 'cat': {
-          // Read a file from the local workspace
-          const filePath = join(workspaceRoot, parsed.path!);
+          const filePath = join(userBase, parsed.path!);
           if (!existsSync(filePath)) {
             return {
               stdout: makeStream(null),
-              stderr: makeStream('No such file'),
+              stderr: makeStringStream('No such file'),
               on(event: string, handler: (...args: unknown[]) => void) { return this; },
               close() {},
             };
           }
-          const content = readFileSync(filePath, 'utf8');
+          // Binary-safe read — preserve raw bytes for raw download route
+          const content = readFileSync(filePath);
           return {
             stdout: makeStream(content),
-            stderr: makeStream(''),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
         }
 
         case 'echo': {
-          // Write a file to the local workspace
-          const filePath = join(workspaceRoot, parsed.path!);
+          // Binary-safe write — decode base64 to raw Buffer
+          const filePath = join(userBase, parsed.path!);
           const dir = resolve(filePath, '..');
           mkdirSync(dir, { recursive: true });
-          const content = Buffer.from(parsed.content!, 'base64').toString('utf8');
+          const content = Buffer.from(parsed.content!, 'base64');
           writeFileSync(filePath, content);
           return {
-            stdout: makeStream('OK'),
-            stderr: makeStream(''),
+            stdout: makeStringStream('OK'),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
         }
 
         case 'rm': {
-          const filePath = join(workspaceRoot, parsed.path!);
+          const filePath = join(userBase, parsed.path!);
           if (existsSync(filePath)) {
             rmSync(filePath, { recursive: true, force: true });
           }
           return {
-            stdout: makeStream(''),
-            stderr: makeStream(''),
+            stdout: makeStringStream(''),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
         }
 
         case 'mv': {
-          const fromPath = join(workspaceRoot, parsed.path!);
-          const toPath = join(workspaceRoot, parsed.path2!);
+          const fromPath = join(userBase, parsed.path!);
+          const toPath = join(userBase, parsed.path2!);
           if (existsSync(fromPath)) {
             mkdirSync(resolve(toPath, '..'), { recursive: true });
             renameSync(fromPath, toPath);
           }
           return {
-            stdout: makeStream(''),
-            stderr: makeStream(''),
+            stdout: makeStringStream(''),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
         }
 
         case 'mkdir': {
-          const dirPath = join(workspaceRoot, parsed.path!);
+          const dirPath = join(userBase, parsed.path!);
           mkdirSync(dirPath, { recursive: true });
           return {
-            stdout: makeStream(''),
-            stderr: makeStream(''),
+            stdout: makeStringStream(''),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
         }
 
         case 'find': {
-          // List all files under workspace, format like find output
-          const files = listFiles(workspaceRoot);
-          const output = files.map(f => join(workspaceRoot, f)).join('\n');
+          // Ensure the user directory exists even if no files written yet
+          mkdirSync(userBase, { recursive: true });
+          const output = formatFindOutput(userBase, parsed.searchTerm);
           return {
-            stdout: makeStream(output),
-            stderr: makeStream(''),
+            stdout: makeStringStream(output),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
         }
 
         case 'ls': {
-          const filePath = join(workspaceRoot, parsed.path!);
+          const filePath = join(userBase, parsed.path!);
           if (!existsSync(filePath)) {
             return {
               stdout: makeStream(null),
-              stderr: makeStream('No such file'),
+              stderr: makeStringStream('No such file'),
               on(event: string, handler: (...args: unknown[]) => void) { return this; },
               close() {},
             };
           }
           return {
-            stdout: makeStream(filePath),
-            stderr: makeStream(''),
+            stdout: makeStringStream(filePath),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
         }
 
         default:
-          // Unknown command — return empty output
           return {
-            stdout: makeStream(''),
-            stderr: makeStream(''),
+            stdout: makeStringStream(''),
+            stderr: makeStringStream(''),
             on(event: string, handler: (...args: unknown[]) => void) { return this; },
             close() {},
           };
@@ -295,7 +353,6 @@ async function createTestServer(): Promise<TestServer> {
     configurable: true,
   });
 
-  // Import createApp — routes now capture the stubbed sessionManager
   const { createApp } = await import(`file://${root}server/src/app.js`);
   const { runMigrations } = await import(`file://${root}server/src/db.js`);
 
