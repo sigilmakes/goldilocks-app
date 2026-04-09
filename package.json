@@ -18,11 +18,17 @@
     "build": "npm run build -w server && npm run build -w frontend",
     "start": "npm run start -w server",
     "lint": "npm run lint -w server && npm run lint -w frontend",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend"
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "smoke": "bash test/smoke-test.sh"
   },
   "devDependencies": {
+    "@vitest/ui": "^4.1.4",
     "concurrently": "^9.1.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.4"
   },
   "engines": {
     "node": ">=20.0.0"
