@@ -10,7 +10,6 @@ import {
 export interface ApiKeyInfo {
   provider: string;
   hasKey: boolean;
-  isServerKey: boolean;
   createdAt?: number;
 }
 
@@ -31,9 +30,13 @@ interface SettingsState {
   fetchApiKeys(): Promise<void>;
 }
 
+export interface ServerSettings {
+  defaultModel: string | null;
+  defaultFunctional: 'PBEsol' | 'PBE';
+}
+
 interface SettingsResponse {
-  defaultModel?: string;
-  defaultFunctional?: string;
+  settings: ServerSettings;
 }
 
 interface ApiKeysResponse {
@@ -70,9 +73,10 @@ export const useSettingsStore = create<SettingsState>()(
         set({ isLoading: true, error: null });
         try {
           const res = await api.get<SettingsResponse>('/settings');
+          const s = res.settings;
           set({
-            defaultModel: res.defaultModel ?? null,
-            defaultFunctional: (res.defaultFunctional as 'PBEsol' | 'PBE') ?? 'PBEsol',
+            defaultModel: s.defaultModel ?? null,
+            defaultFunctional: s.defaultFunctional ?? 'PBEsol',
             isLoading: false,
           });
         } catch (err: unknown) {
@@ -84,12 +88,13 @@ export const useSettingsStore = create<SettingsState>()(
       updateSettings: async (settings) => {
         set({ isLoading: true, error: null });
         try {
-          await api.patch('/settings', settings);
-          set((state) => ({
-            defaultModel: settings.defaultModel ?? state.defaultModel,
-            defaultFunctional: (settings.defaultFunctional as 'PBEsol' | 'PBE') ?? state.defaultFunctional,
+          const res = await api.patch<SettingsResponse>('/settings', settings);
+          const s = res.settings;
+          set({
+            defaultModel: s.defaultModel ?? null,
+            defaultFunctional: s.defaultFunctional ?? 'PBEsol',
             isLoading: false,
-          }));
+          });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Failed to update settings';
           set({ error: message, isLoading: false });
@@ -124,7 +129,7 @@ export const useSettingsStore = create<SettingsState>()(
           await api.delete(`/settings/api-key/${provider}`);
           set((state) => ({
             apiKeys: state.apiKeys.map((k) =>
-              k.provider === provider ? { ...k, hasKey: false, isServerKey: false } : k
+              k.provider === provider ? { ...k, hasKey: false } : k
             ),
             isLoading: false,
           }));

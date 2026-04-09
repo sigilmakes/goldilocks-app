@@ -1,17 +1,18 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import {
-  ArrowLeft, Download, Edit3, Eye, Save,
+  ArrowLeft, Download, Edit3, Eye, Save, Loader2,
 } from 'lucide-react';
 import { marked } from 'marked';
 import { fetchFile, putFile, downloadWorkspaceFile } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import StructureViewer from '../science/StructureViewer';
 import { useSettingsStore } from '../../store/settings';
-import { getFileExtension, matchesConfiguredExtension } from '../../lib/fileAssociations';
-import MilkdownEditor from './MilkdownEditor';
-import MonacoEditor from './MonacoEditor';
-import PdfViewer from './PdfViewer';
-import ImageViewer from './ImageViewer';
+import { resolveFileKind } from '../../lib/fileKinds';
+
+const MilkdownEditor = lazy(() => import('./MilkdownEditor'));
+const MonacoEditor = lazy(() => import('./MonacoEditor'));
+const PdfViewer = lazy(() => import('./PdfViewer'));
+const ImageViewer = lazy(() => import('./ImageViewer'));
 
 interface FileViewerProps {
   path: string;
@@ -19,16 +20,16 @@ interface FileViewerProps {
   showBackButton?: boolean;
 }
 
-const STRUCTURE_EXTS = new Set(['cif', 'poscar', 'vasp', 'xyz', 'pdb']);
-
 function getViewerType(path: string, monacoExtensions: string[], imageExtensions: string[]): 'cif' | 'pdf' | 'image' | 'markdown' | 'monaco' | 'binary' {
-  const ext = getFileExtension(path);
-  if (STRUCTURE_EXTS.has(ext)) return 'cif';
-  if (ext === 'pdf') return 'pdf';
-  if (ext === 'md') return 'markdown';
-  if (matchesConfiguredExtension(path, imageExtensions)) return 'image';
-  if (matchesConfiguredExtension(path, monacoExtensions)) return 'monaco';
-  return 'binary';
+  const resolved = resolveFileKind(path, monacoExtensions, imageExtensions);
+  switch (resolved.preferredViewer) {
+    case 'structure': return 'cif';
+    case 'pdf': return 'pdf';
+    case 'image': return 'image';
+    case 'milkdown': return 'markdown';
+    case 'monaco': return 'monaco';
+    default: return 'binary';
+  }
 }
 
 type SaveStatus = 'clean' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -47,6 +48,14 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
 }
 
 marked.setOptions({ breaks: true, gfm: true });
+
+function ViewerLoading() {
+  return (
+    <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading viewer…
+    </div>
+  );
+}
 
 function MarkdownViewer({ content }: { content: string }) {
   const html = useMemo(() => {
@@ -257,34 +266,42 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
             {error}
           </div>
         ) : viewerType === 'image' ? (
-          <ImageViewer path={path} />
+          <Suspense fallback={<ViewerLoading />}>
+            <ImageViewer path={path} />
+          </Suspense>
         ) : viewerType === 'pdf' ? (
-          <PdfViewer path={path} />
+          <Suspense fallback={<ViewerLoading />}>
+            <PdfViewer path={path} />
+          </Suspense>
         ) : viewerType === 'markdown' && editMode ? (
-          <MilkdownEditor
-            key={`${path}:milkdown`}
-            editorKey={path}
-            initialValue={editedContent ?? content ?? ''}
-            onChange={(nextValue) => {
-              setEditedContent(nextValue);
-              setSaveStatus(nextValue === content ? 'clean' : 'dirty');
-            }}
-          />
+          <Suspense fallback={<ViewerLoading />}>
+            <MilkdownEditor
+              key={`${path}:milkdown`}
+              editorKey={path}
+              initialValue={editedContent ?? content ?? ''}
+              onChange={(nextValue) => {
+                setEditedContent(nextValue);
+                setSaveStatus(nextValue === content ? 'clean' : 'dirty');
+              }}
+            />
+          </Suspense>
         ) : viewerType === 'markdown' ? (
           <MarkdownViewer content={content ?? ''} />
         ) : viewerType === 'cif' ? (
           <CIFViewer content={content ?? ''} />
         ) : viewerType === 'monaco' ? (
-          <MonacoEditor
-            path={path}
-            value={editMode ? (editedContent ?? '') : (content ?? '')}
-            readOnly={!editMode}
-            onChange={(nextValue) => {
-              setEditedContent(nextValue);
-              setSaveStatus(nextValue === content ? 'clean' : 'dirty');
-            }}
-            onSave={() => void handleSave()}
-          />
+          <Suspense fallback={<ViewerLoading />}>
+            <MonacoEditor
+              path={path}
+              value={editMode ? (editedContent ?? '') : (content ?? '')}
+              readOnly={!editMode}
+              onChange={(nextValue) => {
+                setEditedContent(nextValue);
+                setSaveStatus(nextValue === content ? 'clean' : 'dirty');
+              }}
+              onSave={() => void handleSave()}
+            />
+          </Suspense>
         ) : (
           <div className="flex items-center justify-center h-full text-slate-400 italic text-sm px-6 text-center">
             No viewer configured for this file type yet.

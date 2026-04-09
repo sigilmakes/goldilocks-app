@@ -87,25 +87,62 @@ function sanitizePath(path: string): string {
 function buildTree(
   flat: { path: string; type: 'file' | 'dir'; size?: number; modified?: number }[]
 ): FileEntry[] {
-  const roots: Map<string, FileEntry> = new Map();
+  const root: FileEntry[] = [];
+  const index: Map<string, FileEntry> = new Map();
+
+  function ensureAncestors(path: string): FileEntry | null {
+    // Ensure all parent directories exist, return the direct parent entry
+    const parts = path.split('/').filter(Boolean);
+    let children: FileEntry[] = root;
+    let currentPath = '';
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
+      const existing = index.get(currentPath);
+      if (existing) {
+        children = existing.children!;
+        continue;
+      }
+      const dir: FileEntry = {
+        name: parts[i],
+        path: currentPath,
+        type: 'dir',
+        children: [],
+      };
+      index.set(currentPath, dir);
+      children.push(dir);
+      children = dir.children!;
+    }
+
+    // Return the parent's children array for the leaf entry
+    return parts.length > 1 ? index.get(parts.slice(0, -1).join('/')) ?? null : null;
+  }
 
   for (const entry of flat) {
     const parts = entry.path.split('/').filter(Boolean);
     const name = parts[parts.length - 1];
-    const isDir = entry.type === 'dir';
+
+    const fileEntry: FileEntry = {
+      name,
+      path: entry.path,
+      type: entry.type,
+      size: entry.size,
+      modified: entry.modified,
+      children: entry.type === 'dir' ? [] : undefined,
+    };
+
+    index.set(entry.path, fileEntry);
 
     if (parts.length === 1) {
-      // File or dir at root level
-      roots.set(name, { name, path: entry.path, type: entry.type, size: entry.size, modified: entry.modified, children: isDir ? [] : undefined });
+      root.push(fileEntry);
     } else {
-      // File or dir inside a subdirectory
-      const parentName = parts[parts.length - 2];
-      if (!roots.has(parentName)) {
-        roots.set(parentName, { name: parentName, path: '/' + parts.slice(0, -1).join('/'), type: 'dir', children: [] });
+      const parent = ensureAncestors(entry.path);
+      if (parent?.children) {
+        parent.children.push(fileEntry);
+      } else {
+        // Shouldn't happen if the find output is consistent, but safe fallback
+        root.push(fileEntry);
       }
-      const parent = roots.get(parentName)!;
-      if (!parent.children) parent.children = [];
-      parent.children.push({ name, path: entry.path, type: entry.type, size: entry.size, modified: entry.modified });
     }
   }
 
@@ -120,9 +157,8 @@ function buildTree(
     }
   };
 
-  const result = Array.from(roots.values());
-  sort(result);
-  return result;
+  sort(root);
+  return root;
 }
 
 // --- Route 1: GET / -- List workspace files as a tree ------------------------
@@ -142,13 +178,13 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       output = await execCommand(req.user.id, [
         'sh', '-c',
         `find /home/node -maxdepth 2 -name "*${search.replace(/'/g, "'\"'\"'")}*" ` +
-        `-not -path "/home/node/.*" | head -50 | while read f; do ` +
+        `-not -path "/home/node/.*" -not -name ".*" | head -50 | while read f; do ` +
         'printf "%s\t%s\t%s\t%s\n" "$f" "$(stat -c %s "$f" 2>/dev/null)" "$(stat -c %Y "$f" 2>/dev/null)" "$(stat -c %F "$f" 2>/dev/null)"; done'
       ]);
     } else {
       output = await execCommand(req.user.id, [
         'sh', '-c',
-        'find /home/node -not -path "/home/node" -not -path "/home/node/.*" | ' +
+        'find /home/node -not -path "/home/node" -not -path "/home/node/.*" -not -name ".*" | ' +
         'while read f; do ' +
         'printf "%s\t%s\t%s\t%s\n" "$f" "$(stat -c %s "$f" 2>/dev/null)" "$(stat -c %Y "$f" 2>/dev/null)" "$(stat -c %F "$f" 2>/dev/null)"; done'
       ]);
@@ -241,6 +277,36 @@ router.post('/move', async (req: AuthRequest, res: Response) => {
   } catch (err) {
     console.error('Error moving file:', err);
     res.status(500).json({ error: 'Failed to move file' });
+  }
+});
+
+// --- Route 3.5: POST /mkdir -- Create a directory ---------------------------
+
+router.post('/mkdir', async (req: AuthRequest, res: Response) => {
+  if (!req.user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const { path: dirPath } = req.body as { path?: string };
+
+  if (!dirPath) {
+    res.status(400).json({ error: 'path is required' });
+    return;
+  }
+
+  const safePath = sanitizePath(dirPath);
+  if (!safePath || safePath.startsWith('.')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  try {
+    await execCommand(req.user.id, ['mkdir', '-p', `/home/node/${safePath}`]);
+    res.json({ ok: true, path: safePath });
+  } catch (err) {
+    console.error('Error creating directory:', err);
+    res.status(500).json({ error: 'Failed to create directory' });
   }
 });
 

@@ -25,11 +25,13 @@ export default function Header({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Fetch models and API keys on mount
+  // Fetch settings first (model selection depends on preferred model),
+  // then models and API keys in parallel
   useEffect(() => {
-    fetch();
-    fetchApiKeys();
-    fetchSettings();
+    fetchSettings().then(() => {
+      fetch();
+      fetchApiKeys();
+    });
   }, [fetch, fetchApiKeys, fetchSettings]);
 
   useEffect(() => {
@@ -166,14 +168,6 @@ function KeySourceBadge({ provider, apiKeys }: { provider: string; apiKeys: ApiK
   const keyInfo = apiKeys.find((k) => k.provider === provider);
 
   if (!keyInfo || !keyInfo.hasKey) return null;
-
-  if (keyInfo.isServerKey) {
-    return (
-      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 hidden sm:inline">
-        Server
-      </span>
-    );
-  }
 
   return (
     <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 hidden sm:inline">

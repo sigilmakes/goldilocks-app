@@ -178,7 +178,7 @@ function ApiKeysSection() {
       <SectionCard title="API Keys">
         <div className="space-y-3">
           <p className="text-sm text-slate-400 mb-4">
-            Configure API keys for LLM providers. Server-provided keys are available to all users.
+            Configure API keys for LLM providers. Your keys are encrypted and stored securely.
           </p>
           {PROVIDERS.map((provider) => {
             const keyInfo = getKeyInfo(provider.id);
@@ -202,9 +202,9 @@ function ApiKeysSection() {
                     onClick={() => setModalProvider(provider.id)}
                     className="px-3 py-1.5 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
                   >
-                    {keyInfo?.hasKey && !keyInfo.isServerKey ? 'Replace' : 'Add Key'}
+                    {keyInfo?.hasKey ? 'Replace' : 'Add Key'}
                   </button>
-                  {keyInfo?.hasKey && !keyInfo.isServerKey && (
+                  {keyInfo?.hasKey && (
                     <button
                       onClick={() => handleRemoveKey(provider.id)}
                       className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-600 rounded-lg transition-colors"
@@ -246,14 +246,6 @@ function KeyStatusBadge({ keyInfo }: { keyInfo?: ApiKeyInfo }) {
     return (
       <span className="px-2 py-0.5 text-xs rounded-full bg-slate-600 text-slate-400">
         Not configured
-      </span>
-    );
-  }
-
-  if (keyInfo.isServerKey) {
-    return (
-      <span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400">
-        Server key
       </span>
     );
   }

@@ -89,6 +89,10 @@ export async function moveFile(from: string, to: string): Promise<void> {
   await api.post('/files/move', { from, to });
 }
 
+export async function mkdir(path: string): Promise<void> {
+  await api.post('/files/mkdir', { path });
+}
+
 export function rawFileUrl(path: string): string {
   return `/api/files/${encodeURIComponent(path)}/raw`;
 }

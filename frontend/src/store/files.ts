@@ -10,6 +10,7 @@ export interface WorkspaceFile {
 }
 
 interface FilesState {
+  tree: FileEntry[];
   files: WorkspaceFile[];
   revision: number;
   isLoading: boolean;
@@ -41,6 +42,7 @@ function flattenEntries(entries: FileEntry[], out: WorkspaceFile[] = []): Worksp
 }
 
 export const useFilesStore = create<FilesState>((set, get) => ({
+  tree: [],
   files: [],
   revision: 0,
   isLoading: false,
@@ -50,8 +52,10 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const res = await api.get<FilesResponse>('/files');
+      const tree = res.entries || [];
       set((state) => ({
-        files: flattenEntries(res.entries),
+        tree,
+        files: flattenEntries(tree),
         revision: state.revision + 1,
         isLoading: false,
       }));
@@ -117,5 +121,5 @@ export const useFilesStore = create<FilesState>((set, get) => ({
 
   touch: () => set((state) => ({ revision: state.revision + 1 })),
 
-  clear: () => set({ files: [], revision: 0, error: null }),
+  clear: () => set({ files: [], tree: [], revision: 0, error: null }),
 }));
