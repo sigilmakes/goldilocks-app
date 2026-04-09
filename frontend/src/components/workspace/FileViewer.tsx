@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import {
-  ArrowLeft, Download, Edit3, Eye, Save,
+  ArrowLeft, Download, Edit3, Eye, Save, Loader2,
 } from 'lucide-react';
 import { marked } from 'marked';
 import { fetchFile, putFile, downloadWorkspaceFile } from '../../api/client';
@@ -8,10 +8,11 @@ import { useToastStore } from '../../store/toast';
 import StructureViewer from '../science/StructureViewer';
 import { useSettingsStore } from '../../store/settings';
 import { resolveFileKind } from '../../lib/fileKinds';
-import MilkdownEditor from './MilkdownEditor';
-import MonacoEditor from './MonacoEditor';
-import PdfViewer from './PdfViewer';
-import ImageViewer from './ImageViewer';
+
+const MilkdownEditor = lazy(() => import('./MilkdownEditor'));
+const MonacoEditor = lazy(() => import('./MonacoEditor'));
+const PdfViewer = lazy(() => import('./PdfViewer'));
+const ImageViewer = lazy(() => import('./ImageViewer'));
 
 interface FileViewerProps {
   path: string;
@@ -49,6 +50,14 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
 }
 
 marked.setOptions({ breaks: true, gfm: true });
+
+function ViewerLoading() {
+  return (
+    <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading viewer…
+    </div>
+  );
+}
 
 function MarkdownViewer({ content }: { content: string }) {
   const html = useMemo(() => {
@@ -277,16 +286,18 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
         ) : viewerType === 'cif' ? (
           <CIFViewer content={content ?? ''} />
         ) : viewerType === 'monaco' ? (
-          <MonacoEditor
-            path={path}
-            value={editMode ? (editedContent ?? '') : (content ?? '')}
-            readOnly={!editMode}
-            onChange={(nextValue) => {
-              setEditedContent(nextValue);
-              setSaveStatus(nextValue === content ? 'clean' : 'dirty');
-            }}
-            onSave={() => void handleSave()}
-          />
+          <Suspense fallback={<ViewerLoading />}>
+            <MonacoEditor
+              path={path}
+              value={editMode ? (editedContent ?? '') : (content ?? '')}
+              readOnly={!editMode}
+              onChange={(nextValue) => {
+                setEditedContent(nextValue);
+                setSaveStatus(nextValue === content ? 'clean' : 'dirty');
+              }}
+              onSave={() => void handleSave()}
+            />
+          </Suspense>
         ) : (
           <div className="flex items-center justify-center h-full text-slate-400 italic text-sm px-6 text-center">
             No viewer configured for this file type yet.
