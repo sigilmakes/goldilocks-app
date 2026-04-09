@@ -1,19 +1,10 @@
-# Agent container — runs pi in RPC mode via k8s exec.
+# Agent container — pure execution sandbox for tool calls.
 # One pod per user. PVC mounted at /home/node (user's home directory).
-# The pod runs `sleep infinity` — pi is started via k8s exec.
+# The pod runs `sleep infinity` — the server drives all tool execution via k8s exec.
 
 FROM node:22-alpine
 
 RUN apk add --no-cache python3
-
-# Install Pi SDK
-WORKDIR /opt/pi
-RUN echo '{"type":"module","dependencies":{"@mariozechner/pi-coding-agent":"*"}}' > package.json \
-    && npm install --omit=dev \
-    && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
-
-# Verify pi and python3 are installed
-RUN pi --version && python3 --version
 
 # Set up home directory (will be overlaid by PVC in k8s)
 RUN mkdir -p /home/node && chown -R node:node /home/node
