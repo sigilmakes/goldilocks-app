@@ -262,7 +262,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
               }
 
               // Subscribe to session events BEFORE switching session
-              const unsubscribe = await sessionManager.subscribe(state.user.id, (event: SessionEvent) => {
+              const unsubscribe = await sessionManager.subscribe(state.user.id, msg.conversationId, (event: SessionEvent) => {
                 mapBridgeEvent(event, ws, state);
               });
               state.unsubscribe = unsubscribe;
@@ -270,6 +270,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
               // Switch to the pi session (or create if no pi_session_id yet)
               const sessionPath = await sessionManager.switchSession(
                 state.user.id,
+                msg.conversationId,
                 row.pi_session_id, // null on first open → creates new session
               );
 
@@ -283,7 +284,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
               // Fetch message history from pi
               let messages: HistoryMessage[] = [];
               try {
-                const history = await sessionManager.getMessages(state.user.id);
+                const history = await sessionManager.getMessages(state.user.id, msg.conversationId);
                 // Pi may return { messages: [...] } or bare array
                 const msgList = Array.isArray(history) ? history
                   : (history as Record<string, unknown>)?.messages;
@@ -371,7 +372,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
                 ).run(Date.now(), state.conversationId);
               }
 
-              await sessionManager.prompt(state.user.id, msg.text);
+              await sessionManager.prompt(state.user.id, state.conversationId, msg.text);
             } catch (err) {
               console.error('Prompt error:', err);
               const errorMsg = err instanceof Error ? err.message : 'Failed to process prompt';
@@ -385,7 +386,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
           case 'abort': {
             if (state.user && state.isProcessing) {
               try {
-                await sessionManager.abort(state.user.id);
+                await sessionManager.abort(state.user.id, state.conversationId);
               } catch (err) {
                 console.error('Abort error:', err);
               }
