@@ -2,6 +2,14 @@ import { IncomingMessage } from 'http';
 import jwt from 'jsonwebtoken';
 import { WebSocket, WebSocketServer } from 'ws';
 import { CONFIG } from '../config.js';
+import {
+  recordAgentConnectionClosed,
+  recordAgentConnectionOpened,
+  recordAuthAttempt,
+  recordBrowserConnectionClosed,
+  recordBrowserConnectionOpened,
+  recordRelayError,
+} from './relay-metrics.js';
 import type { ClientMessage, ServerMessage } from '../shared/types.js';
 
 interface AuthUser {
@@ -26,6 +34,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
 
 export function setupWebSocket(wss: WebSocketServer): void {
   wss.on('connection', (browserWs: WebSocket, _req: IncomingMessage) => {
+    recordBrowserConnectionOpened();
     let browserUser: AuthUser | null = null;
     let agentWs: WebSocket | null = null;
     let agentReady = false;
@@ -40,6 +49,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
         const ws = agentWs;
         agentWs = null;
         ws.removeAllListeners();
+        recordAgentConnectionClosed();
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
           ws.close();
         }
@@ -67,10 +77,12 @@ export function setupWebSocket(wss: WebSocketServer): void {
 
         try {
           const payload = jwt.verify(msg.token, CONFIG.jwtSecret) as AuthUser;
+          recordAuthAttempt(true);
           browserUser = payload;
           const connectionGeneration = agentGeneration;
           const nextAgentWs = new WebSocket(CONFIG.agentServiceWsUrl);
           agentWs = nextAgentWs;
+          recordAgentConnectionOpened();
 
           nextAgentWs.on('open', () => {
             if (connectionGeneration !== agentGeneration) return;
@@ -121,9 +133,11 @@ export function setupWebSocket(wss: WebSocketServer): void {
           nextAgentWs.on('error', (err) => {
             if (connectionGeneration !== agentGeneration) return;
             console.error('Agent service WebSocket error:', err);
+            recordRelayError();
             send(browserWs, { type: 'error', error: 'Agent service connection error' });
           });
         } catch {
+          recordAuthAttempt(false);
           send(browserWs, { type: 'auth_fail', error: 'Invalid or expired token' });
         }
         return;
@@ -142,9 +156,13 @@ export function setupWebSocket(wss: WebSocketServer): void {
       agentWs.send(JSON.stringify(msg));
     });
 
-    browserWs.on('close', cleanupAgentConnection);
+    browserWs.on('close', () => {
+      recordBrowserConnectionClosed();
+      cleanupAgentConnection();
+    });
     browserWs.on('error', (err) => {
       console.error('Browser WebSocket error:', err);
+      recordRelayError();
       cleanupAgentConnection();
     });
   });

@@ -6,6 +6,15 @@ import { CONFIG } from '../../server/src/config.js';
 import { getDb, runMigrations, closeDb } from '../../server/src/db.js';
 import { sessionManager, type SessionEvent } from '../../server/src/agent/sessions.js';
 import type { ClientMessage, HistoryMessage, ServerMessage } from '../../server/src/shared/types.js';
+import {
+  gatewayConnectionClosed,
+  gatewayConnectionOpened,
+  getMetrics,
+  internalAuthFailed,
+  promptFinished,
+  promptStarted,
+  websocketErrored,
+} from './metrics.js';
 
 interface InternalAuthRequest extends express.Request {
   internalUserId?: string;
@@ -204,6 +213,7 @@ function verifyInternalRequest(req: InternalAuthRequest, res: Response, next: ex
   const userId = req.header('x-goldilocks-user');
 
   if (sharedSecret !== CONFIG.agentServiceSharedSecret || !userId) {
+    internalAuthFailed();
     res.status(401).json({ error: 'Unauthorized internal request' });
     return;
   }
@@ -216,6 +226,22 @@ const app = express();
 app.use(express.json());
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'agent-service', timestamp: Date.now() });
+});
+
+app.get('/api/ready', (_req, res) => {
+  try {
+    getDb().prepare('SELECT 1').get();
+    res.json({ status: 'ready', dependencies: { db: 'ok' } });
+  } catch (err) {
+    res.status(503).json({
+      status: 'degraded',
+      error: err instanceof Error ? err.message : 'Readiness check failed',
+    });
+  }
+});
+
+app.get('/api/metrics', (_req, res) => {
+  res.json(getMetrics());
 });
 
 app.get('/internal/models', verifyInternalRequest, async (req: InternalAuthRequest, res: Response) => {
@@ -264,6 +290,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
+  gatewayConnectionOpened();
   const state: InternalWsState = {
     userId: null,
     conversationId: null,
@@ -294,6 +321,7 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
     try {
       if (msg.type === 'auth' && 'gatewayToken' in msg) {
         if (msg.gatewayToken !== CONFIG.agentServiceSharedSecret) {
+          internalAuthFailed();
           send(ws, { type: 'auth_fail', error: 'Invalid gateway token' });
           return;
         }
@@ -348,6 +376,7 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
           }
 
           state.isProcessing = true;
+          promptStarted();
           const db = getDb();
           const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(state.conversationId) as { title: string } | undefined;
           if (conv?.title === 'New conversation' && msg.text.trim()) {
@@ -361,6 +390,7 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
             await sessionManager.prompt(state.userId, state.conversationId, msg.text);
           } finally {
             state.isProcessing = false;
+            promptFinished();
           }
           break;
         }
@@ -379,25 +409,39 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
     }
   });
 
-  ws.on('close', cleanup);
+  ws.on('close', () => {
+    gatewayConnectionClosed();
+    cleanup();
+  });
   ws.on('error', (err) => {
     console.error('Agent service websocket error:', err);
+    websocketErrored();
     cleanup();
   });
 });
 
-function shutdown() {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('\nShutting down agent service...');
-  sessionManager.shutdown();
+
+  wss.close();
+  await sessionManager.shutdown();
   closeDb();
-  server.close(() => {
-    console.log('Agent service closed');
-    process.exit(0);
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
   });
+
+  console.log('Agent service closed');
+  process.exit(0);
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => { void shutdown(); });
+process.on('SIGTERM', () => { void shutdown(); });
 
 async function main() {
   runMigrations();

@@ -27,18 +27,29 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 setupWebSocket(wss);
 
 // Graceful shutdown
-function shutdown() {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('\nShutting down...');
-  sessionManager.shutdown();
+
+  wss.close();
+  await sessionManager.shutdown();
   closeDb();
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
   });
+
+  console.log('Server closed');
+  process.exit(0);
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => { void shutdown(); });
+process.on('SIGTERM', () => { void shutdown(); });
 
 // Start
 async function main() {
