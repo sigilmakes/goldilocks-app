@@ -7,7 +7,7 @@ import { fetchFile, putFile, downloadWorkspaceFile } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import StructureViewer from '../science/StructureViewer';
 import { useSettingsStore } from '../../store/settings';
-import { getFileExtension, matchesConfiguredExtension } from '../../lib/fileAssociations';
+import { resolveFileKind } from '../../lib/fileKinds';
 import MilkdownEditor from './MilkdownEditor';
 import MonacoEditor from './MonacoEditor';
 import PdfViewer from './PdfViewer';
@@ -19,16 +19,18 @@ interface FileViewerProps {
   showBackButton?: boolean;
 }
 
-const STRUCTURE_EXTS = new Set(['cif', 'poscar', 'vasp', 'xyz', 'pdb']);
+
 
 function getViewerType(path: string, monacoExtensions: string[], imageExtensions: string[]): 'cif' | 'pdf' | 'image' | 'markdown' | 'monaco' | 'binary' {
-  const ext = getFileExtension(path);
-  if (STRUCTURE_EXTS.has(ext)) return 'cif';
-  if (ext === 'pdf') return 'pdf';
-  if (ext === 'md') return 'markdown';
-  if (matchesConfiguredExtension(path, imageExtensions)) return 'image';
-  if (matchesConfiguredExtension(path, monacoExtensions)) return 'monaco';
-  return 'binary';
+  const resolved = resolveFileKind(path, monacoExtensions, imageExtensions);
+  switch (resolved.preferredViewer) {
+    case 'structure': return 'cif';
+    case 'pdf': return 'pdf';
+    case 'image': return 'image';
+    case 'milkdown': return 'markdown';
+    case 'monaco': return 'monaco';
+    default: return 'binary';
+  }
 }
 
 type SaveStatus = 'clean' | 'dirty' | 'saving' | 'saved' | 'error';

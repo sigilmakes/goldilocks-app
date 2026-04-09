@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   FileText, Folder, FolderOpen, Search, Plus, Trash2,
   Edit3, FolderPlus, FilePlus, ChevronRight, ChevronDown,
-  Image, FileCode, FileJson, Upload,
+  Image, FileCode, Upload,
 } from 'lucide-react';
-import { fetchFiles, deleteFile, moveFile, type FileEntry } from '../../api/client';
+import { deleteFile, moveFile, type FileEntry } from '../../api/client';
 import { useToastStore } from '../../store/toast';
 import { useFilesStore } from '../../store/files';
+import { getFileIconKind } from '../../lib/fileKinds';
 
 interface FileBrowserProps {
   onFileSelect: (path: string) => void;
@@ -32,22 +33,19 @@ function FileIcon({ name, isDir, isOpen }: { name: string; isDir: boolean; isOpe
     );
   }
 
-  const ext = name.split('.').pop()?.toLowerCase() ?? '';
-
-  if (['cif', 'poscar', 'vasp', 'xyz', 'pdb'].includes(ext)) {
-    return <FileCode className="w-4 h-4 text-amber-400 flex-shrink-0" />;
+  const kind = getFileIconKind(name, false);
+  switch (kind) {
+    case 'structure':
+      return <FileCode className="w-4 h-4 text-amber-400 flex-shrink-0" />;
+    case 'image':
+      return <Image className="w-4 h-4 text-emerald-400 flex-shrink-0" />;
+    case 'pdf':
+      return <FileText className="w-4 h-4 text-red-400 flex-shrink-0" />;
+    case 'code':
+      return <FileCode className="w-4 h-4 text-indigo-400 flex-shrink-0" />;
+    default:
+      return <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />;
   }
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
-    return <Image className="w-4 h-4 text-emerald-400 flex-shrink-0" />;
-  }
-  if (['json', 'yaml', 'yml', 'toml'].includes(ext)) {
-    return <FileJson className="w-4 h-4 text-blue-400 flex-shrink-0" />;
-  }
-  if (['ts', 'tsx', 'js', 'jsx', 'py', 'sh', 'in', 'out', 'txt', 'md'].includes(ext)) {
-    return <FileCode className="w-4 h-4 text-indigo-400 flex-shrink-0" />;
-  }
-
-  return <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />;
 }
 
 // -- Context menu
@@ -185,39 +183,37 @@ function CreateMenu({
 
 // -- FileBrowser
 export default function FileBrowser({ onFileSelect, selectedPath, onUploadRequest }: FileBrowserProps) {
-  const [entries, setEntries] = useState<FileEntry[]>([]);
   const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<FileEntry[] | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null);
   const addToast = useToastStore((s) => s.addToast);
-  const revision = useFilesStore((s) => s.revision);
-  const touchWorkspace = useFilesStore((s) => s.touch);
+  const { tree, fetch: fetchFiles, touch } = useFilesStore();
 
-  const loadFiles = useCallback(async (q?: string) => {
-    setLoading(true);
-    try {
-      const res = await fetchFiles(q || undefined);
-      setEntries(res.entries || []);
-    } catch {
-      addToast('Failed to load files', 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [addToast]);
-
-  useEffect(() => { loadFiles(); }, [loadFiles]);
-
+  // When search is cleared, switch back to store tree
   useEffect(() => {
-    void loadFiles(search || undefined);
-  }, [revision, loadFiles, search]);
+    if (!search) setSearchResults(null);
+  }, [search]);
 
-  // Debounced search
+  // Search debounced — uses its own API call since search is server-side
   useEffect(() => {
-    const timer = setTimeout(() => loadFiles(search || undefined), 300);
-    return () => clearTimeout(timer);
-  }, [search, loadFiles]);
+    if (!search) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const { fetchFiles: apiFetch } = await import('../../api/client');
+        const res = await apiFetch(search);
+        if (!cancelled) setSearchResults(res.entries || []);
+      } catch {
+        if (!cancelled) addToast('Search failed', 'error');
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [search, addToast]);
+
+  // Display: search results when searching, store tree otherwise
+  const entries = searchResults ?? tree;
 
   const toggleDir = (path: string) => {
     setExpanded((prev) => {
@@ -225,14 +221,6 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
       if (next.has(path)) next.delete(path);
       else next.add(path);
       return next;
-    });
-  };
-
-  const sortEntries = (items: FileEntry[]) => {
-    return [...items].sort((a, b) => {
-      if (a.type === 'dir' && b.type === 'file') return -1;
-      if (a.type === 'file' && b.type === 'dir') return 1;
-      return a.name.localeCompare(b.name);
     });
   };
 
@@ -250,15 +238,9 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
       const { putFile } = await import('../../api/client');
       await putFile(safeName, '');
       addToast(`Created ${safeName}`, 'success');
-      if (!search) {
-        setEntries((prev) => sortEntries([
-          { name: safeName, path: safeName, type: 'file' },
-          ...prev.filter((entry) => entry.path !== safeName),
-        ]));
-      }
-      touchWorkspace();
+      touch();
       onFileSelect(safeName);
-      void loadFiles(search || undefined);
+      void fetchFiles();
     } catch {
       addToast('Failed to create file', 'error');
     }
@@ -275,18 +257,11 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
     }
 
     try {
-      // Create a .gitkeep inside so the directory persists
-      const { putFile } = await import('../../api/client');
-      await putFile(`${safeName}/.gitkeep`, '');
+      const { mkdir } = await import('../../api/client');
+      await mkdir(safeName);
       addToast(`Created ${safeName}/`, 'success');
-      if (!search) {
-        setEntries((prev) => sortEntries([
-          { name: safeName, path: safeName, type: 'dir', children: [] },
-          ...prev.filter((entry) => entry.path !== safeName),
-        ]));
-      }
-      touchWorkspace();
-      void loadFiles(search || undefined);
+      touch();
+      void fetchFiles();
     } catch {
       addToast('Failed to create folder', 'error');
     }
@@ -302,7 +277,6 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
       return;
     }
 
-    // Build new path by replacing the last segment
     const parts = entry.path.split('/');
     parts[parts.length - 1] = safeName;
     const newPath = parts.join('/');
@@ -310,9 +284,9 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
     try {
       await moveFile(entry.path, newPath);
       addToast(`Renamed to ${safeName}`, 'success');
-      touchWorkspace();
+      touch();
       if (selectedPath === entry.path) onFileSelect(newPath);
-      void loadFiles(search || undefined);
+      void fetchFiles();
     } catch {
       addToast('Failed to rename', 'error');
     }
@@ -331,9 +305,9 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
     try {
       await moveFile(entry.path, safeDest);
       addToast(`Moved to ${safeDest}`, 'success');
-      touchWorkspace();
+      touch();
       if (selectedPath === entry.path) onFileSelect(safeDest);
-      void loadFiles(search || undefined);
+      void fetchFiles();
     } catch {
       addToast('Failed to move', 'error');
     }
@@ -346,10 +320,9 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
     try {
       await deleteFile(entry.path);
       addToast(`Deleted ${entry.name}`, 'success');
-      setEntries((prev) => prev.filter((candidate) => candidate.path !== entry.path));
-      touchWorkspace();
+      touch();
       if (selectedPath === entry.path) onFileSelect('');
-      void loadFiles(search || undefined);
+      void fetchFiles();
     } catch {
       addToast('Failed to delete', 'error');
     }
@@ -433,9 +406,7 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
 
       {/* Tree */}
       <div className="flex-1 overflow-y-auto py-1">
-        {loading && entries.length === 0 ? (
-          <div className="px-4 py-3 text-sm text-slate-400 italic">Loading…</div>
-        ) : entries.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="px-4 py-3 text-sm text-slate-400 italic">
             {search ? 'No files found' : 'No files yet — upload or create one'}
           </div>
