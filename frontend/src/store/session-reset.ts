@@ -27,6 +27,7 @@ export function resetUserScopedFrontendState() {
 
   useFilesStore.setState({
     files: [],
+    tree: [],
     revision: 0,
     isLoading: false,
     error: null,

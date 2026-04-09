@@ -20,8 +20,6 @@ interface FileViewerProps {
   showBackButton?: boolean;
 }
 
-
-
 function getViewerType(path: string, monacoExtensions: string[], imageExtensions: string[]): 'cif' | 'pdf' | 'image' | 'markdown' | 'monaco' | 'binary' {
   const resolved = resolveFileKind(path, monacoExtensions, imageExtensions);
   switch (resolved.preferredViewer) {
@@ -268,19 +266,25 @@ export default function FileViewer({ path, onBack, showBackButton = true }: File
             {error}
           </div>
         ) : viewerType === 'image' ? (
-          <ImageViewer path={path} />
+          <Suspense fallback={<ViewerLoading />}>
+            <ImageViewer path={path} />
+          </Suspense>
         ) : viewerType === 'pdf' ? (
-          <PdfViewer path={path} />
+          <Suspense fallback={<ViewerLoading />}>
+            <PdfViewer path={path} />
+          </Suspense>
         ) : viewerType === 'markdown' && editMode ? (
-          <MilkdownEditor
-            key={`${path}:milkdown`}
-            editorKey={path}
-            initialValue={editedContent ?? content ?? ''}
-            onChange={(nextValue) => {
-              setEditedContent(nextValue);
-              setSaveStatus(nextValue === content ? 'clean' : 'dirty');
-            }}
-          />
+          <Suspense fallback={<ViewerLoading />}>
+            <MilkdownEditor
+              key={`${path}:milkdown`}
+              editorKey={path}
+              initialValue={editedContent ?? content ?? ''}
+              onChange={(nextValue) => {
+                setEditedContent(nextValue);
+                setSaveStatus(nextValue === content ? 'clean' : 'dirty');
+              }}
+            />
+          </Suspense>
         ) : viewerType === 'markdown' ? (
           <MarkdownViewer content={content ?? ''} />
         ) : viewerType === 'cif' ? (

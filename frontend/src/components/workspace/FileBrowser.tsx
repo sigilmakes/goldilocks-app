@@ -215,6 +215,12 @@ export default function FileBrowser({ onFileSelect, selectedPath, onUploadReques
   // Display: search results when searching, store tree otherwise
   const entries = searchResults ?? tree;
 
+  // Guarantee a fetch on mount if the store is empty
+  useEffect(() => {
+    if (tree.length === 0) void fetchFiles();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const toggleDir = (path: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);

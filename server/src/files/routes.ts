@@ -184,7 +184,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     } else {
       output = await execCommand(req.user.id, [
         'sh', '-c',
-        'find /home/node -not -path "/home/node" -not -name ".*" | ' +
+        'find /home/node -not -path "/home/node" -not -path "/home/node/.*" -not -name ".*" | ' +
         'while read f; do ' +
         'printf "%s\t%s\t%s\t%s\n" "$f" "$(stat -c %s "$f" 2>/dev/null)" "$(stat -c %Y "$f" 2>/dev/null)" "$(stat -c %F "$f" 2>/dev/null)"; done'
       ]);

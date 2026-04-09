@@ -3,7 +3,7 @@
  * how a path maps to a viewer, icon, and language.
  */
 
-import { normalizeExtensions, getFileExtension } from './fileAssociations';
+import { getFileExtension } from './fileAssociations';
 
 // -- Canonical file kinds -----------------------------------------------------
 
@@ -23,7 +23,7 @@ export type ViewerKind =
   | 'image'
   | 'none';
 
-export type FileIconKind = 'structure' | 'image' | 'code' | 'pdf' | 'file';
+export type FileIconKind = 'structure' | 'image' | 'code' | 'pdf' | 'file' | 'directory';
 
 export interface ResolvedFileKind {
   kind: FileKind;
@@ -53,48 +53,28 @@ const MONACO_LANGUAGE_MAP: Record<string, string> = {
   sql: 'sql', lua: 'lua', swift: 'swift', r: 'r',
   graphql: 'graphql', gql: 'graphql',
   md: 'markdown',
-  dockerfile: 'dockerfile',
-  makefile: 'makefile',
 };
 
 const IMAGE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tif', 'tiff', 'avif',
 ]);
 
-const STRUCTURE_ICON_EXTENSIONS = STRUCTURE_EXTENSIONS;
+// Icon classification — broader than the Monaco language map so that
+// files like .rs, .go, .c, .cpp, .rb, .sql, .lua, .swift etc.
+// get a code icon even if the user hasn't configured them in Monaco.
 const CODE_ICON_EXTENSIONS = new Set([
-  'ts', 'tsx', 'js', 'jsx', 'py', 'sh', 'in', 'out', 'txt', 'md',
-  'json', 'yaml', 'yml', 'toml',
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs',
+  'py', 'rs', 'go', 'java', 'kt', 'kts',
+  'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'rb', 'php',
+  'sh', 'bash', 'zsh', 'fish',
+  'json', 'jsonc', 'yaml', 'yml', 'toml', 'ini', 'cfg',
+  'sql', 'lua', 'swift', 'r', 'graphql', 'gql',
+  'css', 'scss', 'less', 'html', 'htm', 'xml', 'svg',
+  'in', 'out', 'txt', 'log', 'csv', 'env',
+  'md',
 ]);
 
 // -- Resolver ------------------------------------------------------------------
-
-let cachedMonacoExtensions: string[] = [];
-let cachedImageExtensions: string[] = [];
-let cachedMonacoSet: Set<string> = new Set();
-let cachedImageSet: Set<string> = new Set();
-
-function ensureExtensionCaches(
-  monacoExtensions: string[],
-  imageExtensions: string[],
-) {
-  const monacoNorm = normalizeExtensions(monacoExtensions);
-  const imageNorm = normalizeExtensions(imageExtensions);
-
-  if (
-    monacoNorm.length === cachedMonacoExtensions.length &&
-    imageNorm.length === cachedImageExtensions.length &&
-    monacoNorm.every((e, i) => e === cachedMonacoExtensions[i]) &&
-    imageNorm.every((e, i) => e === cachedImageExtensions[i])
-  ) {
-    return;
-  }
-
-  cachedMonacoExtensions = monacoNorm;
-  cachedImageExtensions = imageNorm;
-  cachedMonacoSet = new Set(monacoNorm);
-  cachedImageSet = new Set(imageNorm);
-}
 
 /**
  * Resolve the canonical file kind for a given path, considering
@@ -122,14 +102,15 @@ export function resolveFileKind(
     return { kind: 'markdown', preferredViewer: 'milkdown', icon: 'file', monacoLanguage: 'markdown' };
   }
 
-  // 4. User-configured extensions
-  ensureExtensionCaches(monacoExtensions, imageExtensions);
+  // 4. User-configured extensions (computed inline — no mutable cache)
+  const imageSet = new Set(imageExtensions);
+  const monacoSet = new Set(monacoExtensions);
 
-  if (cachedImageSet.has(ext)) {
+  if (imageSet.has(ext)) {
     return { kind: 'image', preferredViewer: 'image', icon: 'image' };
   }
 
-  if (cachedMonacoSet.has(ext)) {
+  if (monacoSet.has(ext)) {
     return {
       kind: 'text',
       preferredViewer: 'monaco',
@@ -143,12 +124,12 @@ export function resolveFileKind(
     return { kind: 'image', preferredViewer: 'image', icon: 'image' };
   }
 
-  if (ext in MONACO_LANGUAGE_MAP) {
+  if (ext in MONACO_LANGUAGE_MAP || CODE_ICON_EXTENSIONS.has(ext)) {
     return {
       kind: 'text',
       preferredViewer: 'monaco',
       icon: 'code',
-      monacoLanguage: MONACO_LANGUAGE_MAP[ext],
+      monacoLanguage: MONACO_LANGUAGE_MAP[ext] ?? 'plaintext',
     };
   }
 
@@ -178,9 +159,9 @@ export function getPathDisplayName(path: string): string {
  * Get the file-icon kind for a browser tree entry (does not depend on user settings).
  */
 export function getFileIconKind(name: string, isDir: boolean): FileIconKind {
-  if (isDir) return 'file'; // folders use folder icons at render time
+  if (isDir) return 'directory';
   const ext = getFileExtension(name);
-  if (STRUCTURE_ICON_EXTENSIONS.has(ext)) return 'structure';
+  if (STRUCTURE_EXTENSIONS.has(ext)) return 'structure';
   if (IMAGE_EXTENSIONS.has(ext)) return 'image';
   if (ext === 'pdf') return 'pdf';
   if (CODE_ICON_EXTENSIONS.has(ext)) return 'code';
