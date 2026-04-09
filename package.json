@@ -5,6 +5,7 @@
   "description": "React web app with embedded pi agent for DFT input file generation",
   "workspaces": [
     "server",
+    "agent-service",
     "frontend"
   ],
   "scripts": {
@@ -13,12 +14,13 @@
     "dev:setup": "kind get clusters | grep -q goldilocks || kind create cluster --name goldilocks --config deploy/kind-config.yaml",
     "dev:reset": "kind delete cluster --name goldilocks",
     "dev:server": "npm run dev -w server",
+    "dev:agent-service": "npm run dev -w agent-service",
     "dev:frontend": "npm run dev -w frontend",
-    "dev:both": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w frontend -- --host 0.0.0.0\"",
-    "build": "npm run build -w server && npm run build -w frontend",
+    "dev:both": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w agent-service\" \"npm run dev -w frontend -- --host 0.0.0.0\"",
+    "build": "npm run build -w server && npm run build -w agent-service && npm run build -w frontend",
     "start": "npm run start -w server",
-    "lint": "npm run lint -w server && npm run lint -w frontend",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend",
+    "lint": "npm run lint -w server && npm run lint -w agent-service && npm run lint -w frontend",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w agent-service && npm run typecheck -w frontend",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
