@@ -16,6 +16,7 @@
     "dev:server": "npm run dev -w server",
     "dev:agent-service": "npm run dev -w agent-service",
     "dev:frontend": "npm run dev -w frontend",
+    "dev:web": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w frontend -- --host 0.0.0.0\"",
     "dev:both": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w agent-service\" \"npm run dev -w frontend -- --host 0.0.0.0\"",
     "build": "npm run build -w server && npm run build -w agent-service && npm run build -w frontend",
     "start": "npm run start -w server",
