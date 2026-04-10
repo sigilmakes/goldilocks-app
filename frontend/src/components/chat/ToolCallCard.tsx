@@ -117,19 +117,22 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
       </button>
       {expanded && (
         <div className={`px-3 py-2 space-y-2 overflow-hidden ${bodyClass}`}>
-          {/* Show streaming content while the tool is running. */}
-          {parsed && parsed.content ? (
-            <div className="min-w-0">
-              <pre className={`text-xs rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap ${preClass}`}>
-                {parsed.content}
-              </pre>
-            </div>
-          ) : tool.streamContent ? (
-            <div className="min-w-0">
-              <pre className={`text-xs rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap ${preClass}`}>
-                {tool.streamContent}
-              </pre>
-            </div>
+          {/* Show streaming content only while the tool is still running.
+              Once done, prefer the finalized result to avoid duplicate output. */}
+          {tool.status === 'running' ? (
+            parsed && parsed.content ? (
+              <div className="min-w-0">
+                <pre className={`text-xs rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap ${preClass}`}>
+                  {parsed.content}
+                </pre>
+              </div>
+            ) : tool.streamContent ? (
+              <div className="min-w-0">
+                <pre className={`text-xs rounded p-2 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap ${preClass}`}>
+                  {tool.streamContent}
+                </pre>
+              </div>
+            ) : null
           ) : null}
           {tool.result !== undefined && (
             <div>
