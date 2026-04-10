@@ -3,9 +3,6 @@ import {
   createAgentSession,
   createBashTool,
   createEditTool,
-  createFindTool,
-  createGrepTool,
-  createLsTool,
   createReadTool,
   createWriteTool,
   getAgentDir,
@@ -252,9 +249,6 @@ class SessionManager {
       bash: createBashTool(getRemoteWorkspaceCwd(), { operations: operations.bash }),
       edit: createEditTool(getRemoteWorkspaceCwd(), { operations: operations.edit }),
       write: createWriteTool(getRemoteWorkspaceCwd(), { operations: operations.write }),
-      grep: createGrepTool(getRemoteWorkspaceCwd(), { operations: operations.grep }),
-      find: createFindTool(getRemoteWorkspaceCwd(), { operations: operations.find }),
-      ls: createLsTool(getRemoteWorkspaceCwd(), { operations: operations.ls }),
     };
 
     const { session } = await createAgentSession({
