@@ -7,18 +7,21 @@ The frontend communicates with the server over a single WebSocket connection at 
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant S as Server
+    participant GW as Gateway
+    participant AS as Agent Service
 
-    C->>S: Connect to /ws
-    C->>S: {type: "auth", token: "jwt..."}
-    alt Valid token
-        S-->>C: {type: "auth_ok", userId: "..."}
-        C->>S: {type: "open", conversationId: "..."}
-        Note over S: Switch pi session, fetch history
-        S-->>C: {type: "ready", conversationId: "...", messages: [...]}
-    else Invalid token
-        S-->>C: {type: "auth_fail", error: "..."}
-    end
+    C->>GW: Connect to /ws
+    C->>GW: {type: "auth", token: "jwt..."}
+    GW->>GW: Verify JWT
+    GW->>AS: Internal WS auth {userId, gatewayToken}
+    AS-->>GW: auth_ok
+    GW-->>C: auth_ok {userId}
+
+    C->>GW: {type: "open", conversationId: "..."}
+    GW->>AS: {type: "open", conversationId: "..."}
+    Note over AS: Switch Pi session, fetch history
+    AS-->>GW: {type: "ready", conversationId, messages: [...]}
+    GW-->>C: {type: "ready", conversationId, messages: [...]}
 ```
 
 ## Client → Server Messages

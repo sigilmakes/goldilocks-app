@@ -20,6 +20,31 @@ export type ChatMessage =
   | { role: 'user'; text: string; files?: string[]; timestamp: number }
   | { role: 'assistant'; blocks: AssistantBlock[]; timestamp: number };
 
+function patchPersistedTool(
+  messages: ChatMessage[],
+  toolCallId: string,
+  updater: (tool: ToolCall) => ToolCall,
+): ChatMessage[] {
+  let changed = false;
+  const nextMessages = messages.map((message) => {
+    if (message.role !== 'assistant') return message;
+
+    let blockChanged = false;
+    const nextBlocks = message.blocks.map((block) => {
+      if (block.type !== 'tool_call' || block.data.toolCallId !== toolCallId) {
+        return block;
+      }
+      blockChanged = true;
+      changed = true;
+      return { type: 'tool_call' as const, data: updater(block.data) };
+    });
+
+    return blockChanged ? { ...message, blocks: nextBlocks } : message;
+  });
+
+  return changed ? nextMessages : messages;
+}
+
 interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
@@ -103,8 +128,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const newTools = new Map(state.activeTools);
       const existing = newTools.get(toolCallId);
+      if (existing) {
+        newTools.set(toolCallId, {
+          ...existing,
+          toolCallId,
+          toolName,
+          args,
+          status: 'running',
+        });
+        return { activeTools: newTools };
+      }
+
+      const patchedMessages = patchPersistedTool(state.messages, toolCallId, (tool) => ({
+        ...tool,
+        toolName,
+        args,
+        status: 'running',
+      }));
+
+      if (patchedMessages !== state.messages) {
+        return { messages: patchedMessages };
+      }
+
       newTools.set(toolCallId, {
-        ...existing,
         toolCallId,
         toolName,
         args,
@@ -123,8 +169,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...tool,
           streamContent: (tool.streamContent ?? '') + content,
         });
+        return { activeTools: newTools };
       }
-      return { activeTools: newTools };
+
+      const patchedMessages = patchPersistedTool(state.messages, toolCallId, (persistedTool) => ({
+        ...persistedTool,
+        streamContent: (persistedTool.streamContent ?? '') + content,
+      }));
+
+      return patchedMessages !== state.messages ? { messages: patchedMessages } : { activeTools: newTools };
     });
   },
 
@@ -139,8 +192,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           isError,
           status: 'done',
         });
+        return { activeTools: newTools };
       }
-      return { activeTools: newTools };
+
+      const patchedMessages = patchPersistedTool(state.messages, toolCallId, (persistedTool) => ({
+        ...persistedTool,
+        result,
+        isError,
+        status: 'done',
+      }));
+
+      return patchedMessages !== state.messages ? { messages: patchedMessages } : { activeTools: newTools };
     });
   },
 

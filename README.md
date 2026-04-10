@@ -21,7 +21,7 @@ Goldilocks pairs an AI chat assistant with domain-specific tools to help computa
 |-------|------------|
 | Frontend | React 18, Vite 6, Tailwind CSS, Zustand 5, React Router 7 |
 | Backend | Express 5, TypeScript, better-sqlite3, WebSocket (ws) |
-| Agent | [Pi SDK](https://github.com/mariozechner/pi-coding-agent) via JSON-RPC |
+| Agent | [Pi SDK](https://github.com/mariozechner/pi-coding-agent) in-process with pod-backed tool execution |
 | Auth | JWT, bcrypt, AES-256-GCM encrypted API key storage |
 | Infrastructure | Kubernetes (`@kubernetes/client-node`), kind + Tilt for local dev |
 | Visualisation | 3Dmol.js |

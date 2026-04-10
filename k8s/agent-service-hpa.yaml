@@ -1,0 +1,31 @@
+# NOTE: The active_prompts custom metric requires a Prometheus adapter
+# (e.g. prometheus-adapter) configured to scrape /api/metrics from
+# agent-service pods. Without it, k8s cannot discover this metric
+# and the HPA will report MissingMetrics. Either deploy the adapter
+# or remove the Pods metric and rely on CPU/memory alone.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-service-hpa
+  namespace: goldilocks
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-service
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: active_prompts
+        target:
+          type: AverageValue
+          averageValue: "10"

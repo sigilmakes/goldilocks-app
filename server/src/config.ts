@@ -32,10 +32,16 @@ export const CONFIG = {
   k8sNamespace: process.env.K8S_NAMESPACE ?? 'goldilocks',
   agentImage: process.env.AGENT_IMAGE ?? 'goldilocks-agent:latest',
   agentIdleTimeoutMs: parseInt(process.env.AGENT_IDLE_TIMEOUT_MS ?? '1800000', 10), // 30min
+  agentServiceUrl: process.env.AGENT_SERVICE_URL ?? 'http://agent-service:3001',
+  agentServiceWsUrl: process.env.AGENT_SERVICE_WS_URL ?? 'ws://agent-service:3001/ws',
+  get agentServiceSharedSecret(): string {
+    const secret = process.env.AGENT_SERVICE_SHARED_SECRET;
+    if (!secret && process.env.NODE_ENV === 'production') {
+      throw new Error('AGENT_SERVICE_SHARED_SECRET must be set in production');
+    }
+    return secret ?? 'dev-agent-service-secret';
+  },
 
-  
-
-  
   get isDev() {
     return this.nodeEnv === 'development';
   },

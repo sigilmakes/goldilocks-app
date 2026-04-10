@@ -1,0 +1,30 @@
+{
+  "name": "goldilocks-agent-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/agent-service/src/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/agent-service/src/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
+    "@mariozechner/pi-coding-agent": "^0.64.0",
+    "better-sqlite3": "^11.9.1",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.15.3",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

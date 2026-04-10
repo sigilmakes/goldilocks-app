@@ -2,14 +2,15 @@
 
 ## Connection Model
 
-One WebSocket connection per browser tab. Multiple tabs for the same user share the same Bridge on the server — events fan out to all connected clients.
+One WebSocket connection per browser tab. Each browser connection authenticates, then the gateway opens an internal WebSocket to the agent-service. The gateway relays messages between browser and agent-service.
 
 ```mermaid
 graph TD
-    Tab1["Browser Tab 1"] -->|"WebSocket"| WS["WebSocket Handler"]
-    Tab2["Browser Tab 2"] -->|"WebSocket"| WS
-    WS -->|"subscribe()"| Bridge["Bridge (per user)"]
-    Bridge -->|"stdin/stdout"| Pi["pi --mode rpc"]
+    Tab1["Browser Tab 1"] -->|"WS"| GW["Gateway"]
+    Tab2["Browser Tab 2"] -->|"WS"| GW
+    GW -->|"Internal WS"| AS["Agent Service"]
+    AS -->|"Pi SDK"| SM["Session Manager"]
+    SM -->|"k8s exec"| Pod["Sandbox Pod"]
 ```
 
 ## Session Lifecycle
@@ -19,87 +20,76 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant WS as WebSocket Handler
-    participant SM as Session Manager
+    participant GW as Gateway
+    participant AS as Agent Service
     participant PM as Pod Manager
 
-    C->>WS: Connect + auth
-    C->>WS: open {conversationId}
+    C->>GW: Connect + auth {token}
+    GW->>GW: Verify JWT
+    GW->>AS: Internal WS auth {userId, gatewayToken}
+    AS-->>GW: auth_ok {userId}
+    GW-->>C: auth_ok {userId}
 
-    WS->>SM: getOrCreateBridge(userId)
+    C->>GW: open {conversationId}
+    GW->>AS: open {conversationId}
+    AS->>AS: switchSession/load session
+    AS-->>GW: ready {conversationId, messages}
+    GW-->>C: ready {messages}
 
-    alt Pod not running
-        SM->>PM: ensurePod(userId)
-        PM->>PM: Create pod + init container
-        PM-->>SM: pod ready
-        SM->>PM: execInPod(userId, ["pi", "--mode", "rpc", "--continue"])
-        PM-->>SM: stdin/stdout streams
-        SM->>SM: new Bridge(streams)
-    end
-
-    WS->>SM: switchSession(userId, sessionPath)
-    WS->>SM: getMessages(userId)
-    WS-->>C: ready {messages}
+    C->>GW: prompt {text}
+    GW->>AS: prompt {text}
+    AS->>PM: ensurePod + tool exec
+    PM-->>AS: tool output
+    AS-->>GW: text_delta / tool events / agent_end
+    GW-->>C: relay
 ```
 
-### Idle Timeout
+### Re-authentication Safety
 
-```mermaid
-graph LR
-    Active["Pod running<br/>lastActive = now"] -->|"No activity for 30min"| Evict["Pod Manager<br/>evictIdle()"]
-    Evict -->|"deletePod()"| Deleted["Pod deleted<br/>hostPath preserved"]
-    Deleted -->|"Next user request"| Recreate["ensurePod()<br/>Pod recreated"]
-    Recreate --> Active
-```
+If a browser sends a second `auth` message (e.g., on token refresh), the gateway:
 
-The Pod Manager checks every 60 seconds for idle pods. When evicted:
-- The Bridge is closed (pending RPCs rejected)
+1. Increments a generation counter for this browser connection
+2. Closes the old agent-service WS and removes its listeners
+3. Opens a new agent-service WS with the new credentials
+4. All event handlers check the generation counter — stale sockets are silently ignored
+
+This prevents orphaned sockets and cross-user event bleed.
+
+### Keepalive
+
+Both browser and agent-service connections use ping/pong keepalive at 30-second intervals. If no pong is received within 60 seconds, the connection is terminated. This prevents zombie connections from accumulating.
+
+### Pod Idle Timeout
+
+The Pod Manager checks every 60 seconds for idle pods. When evicted (30 min no activity):
 - The pod is deleted (gracePeriod: 5s)
-- The hostPath volume is **preserved** — sessions and files survive
-- Next user interaction recreates the pod and re-execs pi
+- The hostPath volume is preserved — sessions and files survive
+- Next user interaction recreates the pod
 
 ### Pod Failure
 
 ```mermaid
 graph TD
-    Fail["Pod crash / exec exit"] -->|"Bridge detects stdout end"| Close["Bridge.close()"]
-    Close --> Clear["Session cleared from cache"]
-    Clear -->|"Next request"| Verify["ensurePod: verify in k8s"]
+    Fail["Pod crash / k8s event"] -->|"Tool execution fails"| ToolErr["Agent: tool call fails"]
+    ToolErr -->|"Session stays alive"| Recover["Agent can retry with new pod"]
+    Fail -->|"Pod Manager detects"| Verify["ensurePod: verify in k8s"]
     Verify -->|"Pod gone"| Recreate["Create new pod"]
-    Verify -->|"Pod exists but not Running"| Delete["Delete + recreate"]
-    Recreate --> Connect["Exec pi, create Bridge"]
+    Verify -->|"Pod exists but crashing"| Delete["Delete + recreate"]
+    Recreate --> ToolRetry["Agent retries tool call"]
 ```
 
-The Pod Manager verifies pod existence with the k8s API before trusting its in-memory record. If the pod was deleted externally (kubectl, Tilt restart, node crash), it detects this and recreates.
-
-### Failure Backoff
-
-| Attempt | Delay | Action |
-|---------|-------|--------|
-| 1 | Immediate | Recreate pod |
-| 2 | 5 seconds | Recreate pod |
-| 3+ | 30 seconds | Surface error to user, stop retrying |
-
-The backoff counter resets when a pod successfully starts.
+Tool failures are just tool failures — the session and agent remain healthy. This is the key architectural benefit of separating the brain from the hands.
 
 ## Multi-Tab Behaviour
 
-All tabs connected as the same user share one Bridge:
-
-- Tab A sends a prompt → both Tab A and Tab B see the streaming response
-- Tab B sends a prompt while Tab A's is processing → pi queues it via `followUp` behaviour
-- Tab A disconnects → Tab B continues receiving events
-- All tabs disconnect → Bridge stays alive until idle timeout
+Each browser tab has its own gateway→agent-service WebSocket. The agent-service tracks connections per conversation key (`userId:conversationId`), so multiple tabs viewing the same conversation can coexist cleanly.
 
 ## Conversation Switching
 
 When a user switches conversations:
 
 1. Frontend closes the old WebSocket, opens a new one
-2. Server sends `switch_session` RPC to pi with the session file path
-3. Pi loads the session from disk
-4. Server calls `get_messages` to fetch the history
-5. History sent to frontend in the `ready` message
-6. Frontend renders the full conversation
-
-Pi's session files live on the hostPath at `~/.pi/agent/sessions/`. The SQLite `conversations.pi_session_id` column stores the absolute path to each session file.
+2. Agent-service calls `switchSession` on the Pi SDK
+3. Session loads from durable storage (hostPath)
+4. History is fetched and sent in the `ready` message
+5. Frontend renders the full conversation

@@ -9,7 +9,7 @@ import { Router, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db.js';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
-import { sessionManager } from '../agent/sessions.js';
+import { agentServiceFetch } from '../agent/agent-service-client.js';
 
 const router = Router();
 
@@ -189,17 +189,29 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  db.prepare(`DELETE FROM conversations WHERE id = ?`).run(req.params.id);
-
-  // Clean up pi session files on the PVC
+  // Clean up session files via the agent service before deleting metadata.
   if (row.pi_session_id) {
     try {
-      await sessionManager.deleteConversation(req.user.id, row.pi_session_id);
+      const response = await agentServiceFetch('/internal/sessions/delete', {
+        method: 'POST',
+        userId: req.user.id,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionPath: row.pi_session_id }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        res.status(502).json({ error: (payload as { error?: string }).error ?? 'Failed to delete agent session' });
+        return;
+      }
     } catch (err) {
       console.error('Failed to clean up pi session:', err);
+      res.status(502).json({ error: 'Failed to delete agent session' });
+      return;
     }
   }
 
+  db.prepare(`DELETE FROM conversations WHERE id = ?`).run(req.params.id);
   res.json({ ok: true });
 });
 

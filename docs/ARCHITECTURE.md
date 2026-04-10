@@ -2,74 +2,96 @@
 
 ## Overview
 
-Goldilocks is a web application that wraps the [Pi coding agent](https://github.com/mariozechner/pi-coding-agent) with a multi-user UI for DFT calculation assistance. The web app is a thin layer — Pi owns all agent logic, sessions, tools, and model selection.
+Goldilocks is a web application that wraps the [Pi coding agent](https://github.com/mariozechner/pi-coding-agent) with a multi-user UI for DFT calculation assistance. The agent runs in a dedicated service using the Pi SDK in-process, with all tool execution routed through per-user Kubernetes pods.
 
 ```mermaid
 graph TD
     Browser["React Frontend<br/>Tabbed Shell, Chat, File Browser, Settings"]
-    Express["Express Server<br/>Auth, SQLite, REST API, WebSocket"]
-    Bridge["Bridge (per user)<br/>JSONL stdin/stdout RPC"]
+    Gateway["Gateway (Express)<br/>Auth, SQLite, REST, WS Relay"]
+    AgentService["Agent Service<br/>Pi SDK Harness, Sessions, Tool Routing"]
     PodMgr["Pod Manager<br/>k8s API, pod/volume lifecycle"]
-    Pod["Agent Pod (per user)<br/>pi --mode rpc"]
+    Pod["Sandbox Pod (per user)<br/>Tool execution only"]
 
-    Browser -->|"WebSocket + REST"| Express
-    Express -->|"one Bridge per user"| Bridge
-    Bridge -->|"stdin/stdout via k8s exec"| PodMgr
+    Browser -->|"WebSocket + REST"| Gateway
+    Gateway -->|"Internal WS"| AgentService
+    AgentService -->|"k8s exec (tool I/O)"| PodMgr
     PodMgr -->|"k8s API"| Pod
 ```
 
 ## Principles
 
 1. **One architecture.** k8s for dev (kind + Tilt) and prod. No local-mode alternative.
-2. **Pi owns the agent.** Sessions, conversations, tools, models — all managed by Pi. The web app doesn't reimplement any of it.
-3. **Bridge pattern.** Communication with Pi is JSONL over stdin/stdout. The Bridge is the only code that talks to Pi.
-4. **Pod per user, not per session.** One long-lived pod per user. Pi switches sessions internally via RPC.
-5. **Build bottom-up.** Every layer tested against real infrastructure before the next layer goes on.
+2. **Pi owns the agent.** Sessions, conversations, models — managed by Pi's SDK inside the agent-service. The gateway doesn't reimplement any agent logic.
+3. **Brain outside the sandbox.** The agent (reasoning, auth, session state) lives in the agent-service. The pod runs only tool commands: bash, read, write, edit, find, grep, ls.
+4. **Credentials stay outside the pod.** Provider API keys are never injected into sandbox environment variables. They live only in `AuthStorage` inside the agent-service.
+5. **Pod per user, not per session.** One long-lived pod per user. Pi switches sessions via the SDK, not by restarting the process.
+6. **Sessions survive harness restarts.** Session files are stored durably outside the pod. If the agent-service restarts, it reopens sessions from disk.
 
 ## Layers
 
 ### Frontend (React)
 
-The browser-side application. Connects to the server via WebSocket for streaming chat and REST for metadata (conversations, files, models, settings).
+The browser-side application. Connects to the gateway via WebSocket for streaming chat and REST for metadata (conversations, files, models, settings).
 
 **Owns:** UI rendering, local UI state (which tab is active, textarea content, sidebar mode).
 
-**Does not own:** Message history (server-side in Pi), session state, file storage, model selection logic.
+**Does not own:** Message history (server-side in Pi sessions), session state, file storage, model selection logic.
 
-### Express Server
+### Gateway (Express)
 
-The HTTP/WebSocket server. Handles auth (JWT), serves the REST API, and bridges WebSocket connections to per-user Bridge instances.
+The HTTP/WebSocket server. Handles auth (JWT), serves the REST API, and relays WebSocket connections to the agent-service.
 
-**Owns:** Authentication, conversation metadata (SQLite), file proxy, WebSocket fan-out, Bridge lifecycle.
+**Owns:** Authentication, conversation metadata (SQLite), file proxy, WebSocket relay, static file serving.
 
-**Does not own:** Agent logic, conversation content, model selection logic.
+**Does not own:** Agent logic, session state, model inference, tool execution.
 
-### Bridge
+Key files:
+- `server/src/agent/websocket.ts` — WS relay: browser auth → internal WS to agent-service
+- `server/src/agent/agent-service-client.ts` — HTTP proxy to agent-service for REST routes
 
-One instance per user. Communicates with Pi via JSONL over stdin/stdout streams. Handles RPC request/response correlation, event dispatch to subscribers, and structured logging.
+### Agent Service
+
+A dedicated Node process (port 3001) that runs the Pi SDK. Creates and manages `AgentSession` instances, routes tool execution to per-user pods, and streams events back to the gateway.
 
 ```mermaid
 sequenceDiagram
-    participant WS as WebSocket Handler
-    participant B as Bridge
-    participant Pi as pi --mode rpc
+    participant GW as Gateway
+    participant AS as Agent Service
+    participant SDK as Pi SDK
+    participant Pod as Sandbox Pod
 
-    WS->>B: rpc("prompt", {message: "hello"})
-    B->>Pi: {"id":"abc","type":"prompt","message":"hello"}\n
-    Pi-->>B: {"type":"response","id":"abc","success":true}\n
-    Pi-->>B: {"type":"message_update",...,"delta":"Hi"}\n
-    B-->>WS: text_delta "Hi"
-    Pi-->>B: {"type":"message_end",...}\n
-    B-->>WS: message_end
-    Pi-->>B: {"type":"agent_end",...}\n
-    B-->>WS: agent_end
+    GW->>AS: WS auth {userId, gatewayToken}
+    AS-->>GW: auth_ok
+    GW->>AS: WS open {conversationId}
+    AS->>SDK: createAgentSession / switchSession
+    AS-->>GW: ready {messages}
+    GW->>AS: WS prompt {text}
+    AS->>SDK: prompt(text)
+    SDK->>Pod: bash/read/write/edit via k8s exec
+    Pod-->>SDK: tool output
+    SDK-->>AS: message_update events
+    AS-->>GW: text_delta / tool_start / tool_end
+    SDK-->>AS: agent_end
+    AS-->>GW: agent_end
 ```
 
-**Owns:** JSONL protocol, RPC correlation with timeouts, event parsing, text delta accumulation, `message_end` fallback text extraction, tool call streaming, file logging.
+**Owns:** Pi SDK sessions, AuthStorage (decrypted provider keys), PodManager, tool routing, model selection, conversation history.
 
-**Does not own:** k8s, HTTP, WebSocket, auth.
+**Does not own:** User auth, conversation metadata DB, static file serving.
 
-**Key file:** `server/src/agent/bridge.ts`
+Key file: `agent-service/src/index.ts`
+
+### Pod Tool Operations
+
+Rather than the Pi SDK running tools locally, Goldilocks provides pluggable operations backends that execute inside the user's pod via k8s exec:
+
+- `BashOperations.exec()` → `k8s exec` with shell command
+- `ReadOperations.readFile()` → `k8s exec cat`
+- `WriteOperations.writeFile()` → `k8s exec` with base64 pipe
+- `EditOperations.readFile/writeFile()` → same as read/write
+- `FindOperations`, `GrepOperations`, `LsOperations` → shell commands in the pod
+
+**Key file:** `server/src/agent/pod-tool-operations.ts`
 
 ### Pod Manager
 
@@ -77,19 +99,18 @@ Manages k8s resources. Creates pods and hostPath volumes per user, execs command
 
 **Owns:** k8s API calls, pod creation/deletion, hostPath volume provisioning, exec streams, idle timeout eviction, backoff on failures.
 
-**Does not own:** Pi, RPC protocol, conversations.
+**Does not own:** Pi sessions, RPC protocol, conversations.
 
 **Key file:** `server/src/agent/pod-manager.ts`
 
-### Agent Pod
+### Sandbox Pod
 
-A container running Pi. One per user, long-lived. The pod runs `sleep infinity` and Pi is started via k8s exec (`pi --mode rpc --continue`). The user's home directory is a hostPath volume that persists across pod restarts and cluster rebuilds.
+A container running `sleep infinity`. One per user, long-lived. No pi binary, no provider credentials. Tools are executed via k8s exec from the agent-service. The user's home directory is a hostPath volume that persists across pod restarts.
 
 ```mermaid
 graph LR
-    subgraph Pod["Agent Pod"]
+    subgraph Pod["Sandbox Pod"]
         Sleep["CMD: sleep infinity"]
-        Pi["pi --mode rpc --continue<br/>(started via k8s exec)"]
     end
     subgraph Volumes
         Home["/home/node<br/>hostPath → ./data/homes/userId/"]
@@ -99,24 +120,25 @@ graph LR
     Tmp --> Pod
 ```
 
-**Owns:** Running Pi, user's home directory, all Pi state.
+**Owns:** User's home directory, all Pi state (files only — sessions are managed externally).
+
+**Does not own:** Pi process, provider keys, agent logic.
 
 ## Data Ownership
 
 | Data | Where | Why |
 |------|-------|-----|
-| Users, auth | SQLite | Web app owns auth |
-| Encrypted API keys | SQLite | Decrypted and passed as env vars on pod creation |
-| Conversation metadata | SQLite | Sidebar needs titles/timestamps without hitting the pod |
-| Conversation content | Pi session files on hostPath (`~/.pi/`) | Pi owns this |
-| User files | hostPath (`~/`) | Pi's working directory |
-| Available models | Pi (via `get_available_models` RPC) | Pi knows which keys are set |
+| Users, auth, conversation metadata | SQLite (gateway) | Web app owns auth and metadata |
+| Provider API keys (encrypted) | SQLite (gateway) | Decrypted only inside agent-service's AuthStorage |
+| Conversation content | Pi session files on hostPath | Pi owns this via SessionManager |
+| User files | hostPath (`~/`) | Pod's working directory |
+| Available models | Pi (via SDK) | Pi knows which provider keys are set |
 
 ## Detailed Documentation
 
-- **[Backend](architecture/backend.md)** — Server modules, Bridge, Pod Manager, REST API
+- **[Backend](architecture/backend.md)** — Gateway modules, agent-service, pod tool operations, REST API
 - **[Frontend](architecture/frontend.md)** — React components, Zustand stores, routing
 - **[Data Flow](architecture/data-flow.md)** — Prompt flow, model selection, file upload, conversation lifecycle
 - **[Deployment](architecture/deployment.md)** — Kind + Tilt setup, k8s resources, production notes
-- **[Security](architecture/security.md)** — Auth, API key encryption, container isolation, network
+- **[Security](architecture/security.md)** — Auth, API key handling, container isolation, network
 - **[WebSocket Sessions](architecture/websocket-sessions.md)** — Connection model, idle timeout, failure handling, multi-tab

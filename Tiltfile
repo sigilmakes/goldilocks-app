@@ -15,6 +15,7 @@ type: Opaque
 stringData:
   jwt-secret: dev-jwt-secret-not-for-production
   encryption-key: dev-encryption-key-not-for-prod
+  agent-service-shared-secret: dev-agent-service-secret
 """))
 
 # ── k8s Infrastructure ──
@@ -52,10 +53,31 @@ docker_build(
     ],
 )
 
-k8s_yaml('k8s/web-app.yaml')
+docker_build(
+    'goldilocks-agent-service',
+    '.',
+    dockerfile='deploy/docker/Dockerfile.agent-service.dev',
+    live_update=[
+        fall_back_on([
+            './package.json',
+            './server/package.json',
+            './agent-service/package.json',
+            './package-lock.json',
+        ]),
+        sync('./agent-service/src', '/app/agent-service/src'),
+        sync('./server/src', '/app/server/src'),
+    ],
+)
+
+k8s_yaml(['k8s/web-app.yaml', 'k8s/agent-service.yaml', 'k8s/web-app-hpa.yaml', 'k8s/agent-service-hpa.yaml'])
 k8s_resource(
     'web-app',
     port_forwards=['3000:3000', '5173:5173'],
+    labels=['app'],
+)
+k8s_resource(
+    'agent-service',
+    port_forwards=['3001:3001'],
     labels=['app'],
 )
 

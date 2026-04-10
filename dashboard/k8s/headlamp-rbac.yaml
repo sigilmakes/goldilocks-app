@@ -7,6 +7,19 @@ metadata:
     app.kubernetes.io/name: headlamp
     app.kubernetes.io/component: dashboard
 ---
+# Dev login token for stock Headlamp. Headlamp's docs recommend that the
+# authenticated user/token carries the RBAC; for local ops, a cluster-admin
+# token is the least surprising way to use the full stock UI.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp-admin
+  namespace: goldilocks
+  labels:
+    app.kubernetes.io/name: headlamp
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: dev-auth
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -34,6 +47,19 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: headlamp-cluster-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-admin-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: headlamp-admin
+    namespace: goldilocks
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NAMESPACE="goldilocks"
-SERVICE_ACCOUNT="headlamp"
+SERVICE_ACCOUNT="headlamp-admin"
 OUT_FILE=".dev/headlamp-token.txt"
 TMP_FILE="${OUT_FILE}.tmp"
 

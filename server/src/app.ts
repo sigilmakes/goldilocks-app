@@ -13,6 +13,9 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 
 import { CONFIG } from './config.js';
+import { getDb } from './db.js';
+import { agentServiceFetch } from './agent/agent-service-client.js';
+import { getRelayMetrics } from './agent/relay-metrics.js';
 import authRoutes from './auth/routes.js';
 import conversationRoutes from './conversations/routes.js';
 import fileRoutes from './files/routes.js';
@@ -50,7 +53,32 @@ export function createApp() {
 
   // Health check
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: Date.now(), version: '0.1.0' });
+    res.json({ status: 'ok', timestamp: Date.now(), version: '0.1.0', service: 'gateway' });
+  });
+
+  app.get('/api/ready', async (_req, res) => {
+    try {
+      getDb().prepare('SELECT 1').get();
+      const response = await agentServiceFetch('/api/health', {
+        method: 'GET',
+        userId: 'system',
+        signal: AbortSignal.timeout(1_000),
+      });
+      if (!response.ok) {
+        res.status(503).json({ status: 'degraded', dependency: 'agent-service' });
+        return;
+      }
+      res.json({ status: 'ready', dependencies: { db: 'ok', agentService: 'ok' } });
+    } catch (err) {
+      res.status(503).json({
+        status: 'degraded',
+        error: err instanceof Error ? err.message : 'Readiness check failed',
+      });
+    }
+  });
+
+  app.get('/api/metrics', (_req, res) => {
+    res.json({ relay: getRelayMetrics() });
   });
 
   // Routes
