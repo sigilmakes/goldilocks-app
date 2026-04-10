@@ -179,7 +179,7 @@ class SessionManager {
       await this.disposeContext(contextId);
     }
     this.latestConversationByUser.clear();
-    await this.podManager.shutdown();
+    await this.podManager.shutdown({ deletePods: false });
   }
 
   getPodManager(): PodManager {

@@ -218,14 +218,11 @@ export function createPodToolOperations(deps: {
       await podManager.ensurePod(userId);
       podManager.touch(userId);
 
-      const envExports = Object.entries(options.env ?? {})
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => `export ${key}=${shellQuote(String(value))}`)
-        .join('; ');
-
+      // Do not forward the agent-service process environment into the sandbox.
+      // The pod already has its own PATH/HOME, and forwarding options.env would
+      // leak service secrets and cluster wiring into user tool executions.
       const script = [
         `cd ${shellQuote(cwd)}`,
-        envExports,
         command,
       ].filter(Boolean).join('; ');
 

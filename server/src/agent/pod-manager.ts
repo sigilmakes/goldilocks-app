@@ -383,22 +383,29 @@ export class PodManager {
   }
 
   /**
-   * Shut down all pods and stop the idle timer.
+   * Shut down the manager and stop the idle timer.
+   *
+   * By default this preserves user sandbox pods. The agent-service is a shared,
+   * restartable harness; process restarts should not tear down per-user
+   * workspaces. Call with { deletePods: true } only for explicit teardown flows.
    */
-  async shutdown(): Promise<void> {
+  async shutdown(options?: { deletePods?: boolean }): Promise<void> {
     if (this.idleTimer) {
       clearInterval(this.idleTimer);
       this.idleTimer = null;
     }
 
-    const deletes = Array.from(this.pods.keys()).map((userId) =>
-      this.deletePod(userId).catch((err) =>
-        log('ERROR', `Shutdown delete failed for ${userId}`, err)
-      )
-    );
-    await Promise.allSettled(deletes);
+    if (options?.deletePods) {
+      const deletes = Array.from(this.pods.keys()).map((userId) =>
+        this.deletePod(userId).catch((err) =>
+          log('ERROR', `Shutdown delete failed for ${userId}`, err)
+        )
+      );
+      await Promise.allSettled(deletes);
+    }
+
     this.pods.clear();
-    log('INFO', 'PodManager shutdown complete');
+    log('INFO', `PodManager shutdown complete${options?.deletePods ? ' (pods deleted)' : ' (pods preserved)'}`);
   }
 
   // -------------------------------------------------------------------------

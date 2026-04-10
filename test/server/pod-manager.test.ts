@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PodManager } from '../../server/src/agent/pod-manager';
 
 describe('PodManager', () => {
@@ -16,5 +16,21 @@ describe('PodManager', () => {
     expect(names).not.toContain('GEMINI_API_KEY');
 
     void manager.shutdown();
+  });
+
+  it('preserves sandbox pods on shutdown by default', async () => {
+    const manager = new PodManager();
+    const deleteSpy = vi.spyOn(manager, 'deletePod').mockResolvedValue();
+    (manager as unknown as { pods: Map<string, unknown> }).pods.set('user-a', {
+      podName: 'agent-usera',
+      userId: 'user-a',
+      status: 'running',
+      lastActive: Date.now(),
+      consecutiveFailures: 0,
+    });
+
+    await manager.shutdown();
+
+    expect(deleteSpy).not.toHaveBeenCalled();
   });
 });
