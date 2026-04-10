@@ -239,10 +239,10 @@ class SessionManager {
 
     const sessionManager = requestedSessionPath
       ? PiSessionManager.open(resolve(requestedSessionPath), sessionDir)
-      : PiSessionManager.create(process.cwd(), sessionDir);
+      : PiSessionManager.create(getRemoteWorkspaceCwd(), sessionDir);
 
     const { session } = await createAgentSession({
-      cwd: process.cwd(),
+      cwd: getRemoteWorkspaceCwd(),
       agentDir: getAgentDir(),
       authStorage,
       modelRegistry,
