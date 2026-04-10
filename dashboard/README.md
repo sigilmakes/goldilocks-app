@@ -7,16 +7,14 @@ This directory contains the backend deployment for the Goldilocks ops dashboard.
 The dashboard backend is a stock [Headlamp](https://headlamp.dev/) deployment running inside the `goldilocks` namespace.
 
 - **Runtime**: upstream `ghcr.io/headlamp-k8s/headlamp` image
-- **Scope**: Goldilocks-first dashboard; namespace actions plus minimal cluster read for stock Headlamp overview
-- **Auth**: in-cluster `ServiceAccount`
-- **Actions allowed**: read namespace resources, view logs, exec into pods, delete pods
-- **Extra cluster read**: `nodes`, `namespaces`, and `nodes.metrics.k8s.io` so the stock overview page works
+- **Headlamp pod auth**: in-cluster `headlamp` service account with minimal Goldilocks-focused permissions
+- **Dev login auth**: Tilt generates a separate `headlamp-admin` token bound to `cluster-admin` so the stock Headlamp UI works without RBAC dead ends
 - **Local access**: Tilt port-forward to `http://localhost:8080`
 
 ## Layout
 
 - `k8s/headlamp.yaml` — Headlamp deployment and ClusterIP service
-- `k8s/headlamp-rbac.yaml` — dedicated ServiceAccount, Role, and RoleBinding
+- `k8s/headlamp-rbac.yaml` — runtime service account plus dev login service account and RBAC bindings
 
 ## Usage
 
@@ -48,4 +46,4 @@ To regenerate it:
 tilt trigger headlamp-token
 ```
 
-This directory is intentionally minimal for v1: upstream Headlamp, minimal RBAC, no plugins, no wrapper UI.
+This directory is intentionally minimal for v1: upstream Headlamp, minimal runtime RBAC, a broad dev login token for local ops, no plugins, no wrapper UI.

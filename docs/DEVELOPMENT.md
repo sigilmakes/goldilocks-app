@@ -114,7 +114,7 @@ If the token expires or the file is missing, regenerate it through Tilt:
 tilt trigger headlamp-token
 ```
 
-Headlamp runs in-cluster with a dedicated `headlamp` service account scoped to the `goldilocks` namespace.
+Headlamp runs in-cluster with a dedicated `headlamp` runtime service account, but the Tilt-generated login token comes from a separate `headlamp-admin` service account bound to `cluster-admin` for local dev. This matches Headlamp's documented model better: the login token carries the RBAC for what the UI can browse.
 
 ### Logs
 
