@@ -73,37 +73,15 @@ function mapSessionEvent(event: SessionEvent, ws: WebSocket, state: InternalWsSt
           state.promptSentAt = null;
         }
 
+        // Don't render a UI card yet. At this stage the model is still drafting the
+        // tool call JSON, which can be partial/garbled and doesn't represent actual
+        // execution. We only surface real tool cards from tool_execution_* events.
         const tc = delta.partial ?? delta.toolCall;
-        const toolCallId = tc?.id ?? `tc_${Date.now()}`;
-        state.currentToolCallId = toolCallId;
-        send(ws, {
-          type: 'tool_start',
-          toolName: tc?.name ?? 'unknown',
-          toolCallId,
-          args: {},
-        });
-      } else if (delta.type === 'toolcall_delta' && delta.delta && state.currentToolCallId) {
-        send(ws, {
-          type: 'tool_update',
-          toolCallId: state.currentToolCallId,
-          content: delta.delta,
-        });
+        state.currentToolCallId = tc?.id ?? null;
+      } else if (delta.type === 'toolcall_delta') {
+        // Ignore partial tool-call argument generation in the UI.
       } else if (delta.type === 'toolcall_end') {
-        const tc = delta.toolCall;
-        if (tc && state.currentToolCallId) {
-          let args: unknown = {};
-          try {
-            args = tc.arguments ? JSON.parse(tc.arguments) : {};
-          } catch {
-            args = { raw: tc.arguments };
-          }
-          send(ws, {
-            type: 'tool_start',
-            toolName: tc.name ?? 'tool',
-            toolCallId: state.currentToolCallId,
-            args,
-          });
-        }
+        // Execution lifecycle is keyed off tool_execution_start/update/end.
       }
       break;
     }
@@ -136,17 +114,53 @@ function mapSessionEvent(event: SessionEvent, ws: WebSocket, state: InternalWsSt
 
     case 'tool_execution_start': {
       const execId = event.toolCallId as string;
-      if (state.currentToolCallId && execId) {
-        state.toolCallIdMap.set(execId, state.currentToolCallId);
-        state.currentToolCallId = null;
+      const mappedId = state.currentToolCallId ?? execId;
+      state.toolCallIdMap.set(execId, mappedId);
+      state.currentToolCallId = null;
+
+      send(ws, {
+        type: 'tool_start',
+        toolName: (event.toolName as string) ?? 'tool',
+        toolCallId: mappedId,
+        args: event.args ?? {},
+      });
+      break;
+    }
+
+    case 'tool_execution_update': {
+      const execId = event.toolCallId as string;
+      const mappedId = state.toolCallIdMap.get(execId) ?? execId;
+      const partial = event.partialResult;
+
+      let content = '';
+      if (typeof partial === 'string') {
+        content = partial;
+      } else if (partial && typeof partial === 'object' && Array.isArray((partial as { content?: unknown[] }).content)) {
+        content = (partial as { content: Array<{ type: string; text?: string }> }).content
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text ?? '')
+          .join('');
+      } else if (partial != null) {
+        content = typeof partial === 'object' ? JSON.stringify(partial) : String(partial);
+      }
+
+      if (content) {
+        send(ws, {
+          type: 'tool_update',
+          toolCallId: mappedId,
+          content,
+        });
       }
       break;
     }
 
     case 'tool_execution_end': {
       const execId = event.toolCallId as string;
-      const mappedId = state.toolCallIdMap.get(execId) ?? execId;
+      const mappedId = state.toolCallIdMap.get(execId) ?? state.currentToolCallId ?? execId;
       state.toolCallIdMap.delete(execId);
+      if (state.currentToolCallId === mappedId) {
+        state.currentToolCallId = null;
+      }
 
       let result = event.result;
       if (result && typeof result === 'object' && Array.isArray((result as { content?: unknown[] }).content)) {
