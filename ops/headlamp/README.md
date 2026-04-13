@@ -28,16 +28,17 @@ Then open:
 
 - Headlamp: http://localhost:8080
 
-Tilt also generates a dev login token automatically at:
+Tilt also generates a dev login token automatically. The default
+location is:
 
-```bash
-.dev/headlamp-token.txt
+```
+.dev/headlamp/headlamp-token.txt
 ```
 
 To print it:
 
 ```bash
-cat .dev/headlamp-token.txt
+cat .dev/headlamp/headlamp-token.txt
 ```
 
 To regenerate it:
