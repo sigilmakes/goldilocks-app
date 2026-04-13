@@ -26,9 +26,9 @@
     "start": "npm run start -w @goldilocks/gateway",
     "lint": "npm run lint -w @goldilocks/contracts && npm run lint -w @goldilocks/config && npm run lint -w @goldilocks/data && npm run lint -w @goldilocks/runtime && npm run lint -w @goldilocks/gateway && npm run lint -w @goldilocks/agent-service && npm run lint -w @goldilocks/frontend",
     "typecheck": "npm run typecheck -w @goldilocks/contracts && npm run typecheck -w @goldilocks/config && npm run typecheck -w @goldilocks/data && npm run typecheck -w @goldilocks/runtime && npm run typecheck -w @goldilocks/gateway && npm run typecheck -w @goldilocks/agent-service && npm run typecheck -w @goldilocks/frontend",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:ui": "vitest --ui",
+    "test": "npm run build:packages && vitest run",
+    "test:watch": "npm run build:packages && vitest",
+    "test:ui": "npm run build:packages && vitest --ui",
     "smoke": "bash apps/gateway/test/smoke-test.sh"
   },
   "devDependencies": {
