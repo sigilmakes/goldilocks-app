@@ -64,8 +64,8 @@ Operational files such as Headlamp token generation must stay isolated from app 
 Source and runtime state are separated.
 
 Defaults:
-- app state: `${GOLDILOCKS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/goldilocks}`
-- kind host mount: created by `scripts/dev-setup.sh`
+- app state: `${GOLDILOCKS_STATE_DIR:-./.dev}`
+- kind host mount: `${STATE_ROOT}/kind-data` created by `scripts/dev-setup.sh`
 - Headlamp token: `${STATE_ROOT}/headlamp/headlamp-token.txt`
 
 The repo may still contain legacy ignored state directories on older checkouts, but new setup paths should use the external state root.

@@ -7,7 +7,6 @@ scratchpad
 *.db-journal
 
 # Runtime/dev state
-.local
 .dev
 
 # Build outputs

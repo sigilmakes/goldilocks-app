@@ -1,11 +1,10 @@
-import { homedir } from 'os';
 import { config } from 'dotenv';
 import { resolve } from 'path';
 
 config();
 
-const defaultStateDir = resolve(process.env.GOLDILOCKS_STATE_DIR ?? homedir(), '.local', 'share', 'goldilocks');
-const dataDir = process.env.DATA_DIR ?? defaultStateDir;
+const defaultStateDir = resolve(process.cwd(), '.dev');
+const dataDir = process.env.DATA_DIR ?? (process.env.GOLDILOCKS_STATE_DIR ? resolve(process.env.GOLDILOCKS_STATE_DIR) : defaultStateDir);
 
 export const CONFIG = {
   port: parseInt(process.env.PORT ?? '3000', 10),

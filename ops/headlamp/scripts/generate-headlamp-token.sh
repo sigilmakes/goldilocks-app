@@ -3,7 +3,7 @@ set -euo pipefail
 
 NAMESPACE="goldilocks"
 SERVICE_ACCOUNT="headlamp-admin"
-STATE_ROOT="${GOLDILOCKS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/goldilocks}"
+STATE_ROOT="${GOLDILOCKS_STATE_DIR:-$PWD/.dev}"
 OUT_FILE="${STATE_ROOT}/headlamp/headlamp-token.txt"
 TMP_FILE="${OUT_FILE}.tmp"
 

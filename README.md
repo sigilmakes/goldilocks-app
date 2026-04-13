@@ -66,12 +66,12 @@ npm run dev:reset    # delete cluster
 
 ## State & Local Data
 
-By default, local state lives outside the repo under:
+By default, local dev state lives in the repo under:
 
 - `${GOLDILOCKS_STATE_DIR}` if set
-- otherwise `${XDG_STATE_HOME:-$HOME/.local/state}/goldilocks`
+- otherwise `./.dev`
 
-That state root holds things like the local kind mount and the generated Headlamp login token.
+That state root holds things like the local kind mount and the generated Headlamp login token. It is intentionally gitignored so cleanup is obvious.
 
 ## Testing
 

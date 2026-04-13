@@ -49,7 +49,7 @@ Tilt watches ownership boundaries rather than the whole repo:
 
 Local kind state is created by `npm run dev:setup` under:
 - `${GOLDILOCKS_STATE_DIR}` if set
-- otherwise `${XDG_STATE_HOME:-$HOME/.local/state}/goldilocks`
+- otherwise `./.dev`
 
 ### First-time setup
 
@@ -107,7 +107,7 @@ The smoke test lives at `apps/gateway/test/smoke-test.sh` and runs against the b
 Tilt port-forwards Headlamp to `http://localhost:8080` and generates a dev login token under the local state root:
 
 ```bash
-cat "${GOLDILOCKS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/goldilocks}/headlamp/headlamp-token.txt"
+cat "${GOLDILOCKS_STATE_DIR:-$PWD/.dev}/headlamp/headlamp-token.txt"
 ```
 
 If the token expires or the file is missing, regenerate it through Tilt:
@@ -175,7 +175,7 @@ Check the Bridge logs for stderr from pi. Common causes:
 If you are running locally outside Kubernetes, the DB defaults to:
 
 ```bash
-sqlite3 "${GOLDILOCKS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/goldilocks}/goldilocks.db"
+sqlite3 "${GOLDILOCKS_STATE_DIR:-$PWD/.dev}/goldilocks.db"
 > SELECT id, title, pi_session_id FROM conversations;
 > SELECT user_id, provider FROM api_keys;
 ```

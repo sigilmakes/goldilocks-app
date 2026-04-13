@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CLUSTER_NAME="goldilocks"
-STATE_ROOT="${GOLDILOCKS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/goldilocks}"
+STATE_ROOT="${GOLDILOCKS_STATE_DIR:-$PWD/.dev}"
 KIND_DATA_DIR="${STATE_ROOT}/kind-data"
 TEMPLATE="infra/kind/kind-config.template.yaml"
 TMP_CONFIG="$(mktemp)"
