@@ -16,4 +16,4 @@ COPY apps/agent-service ./apps/agent-service
 COPY packages ./packages
 
 ENV NODE_ENV=development
-CMD ["npm", "run", "dev:agent-service"]
+CMD ["npm", "run", "dev:agent-service-stack"]
