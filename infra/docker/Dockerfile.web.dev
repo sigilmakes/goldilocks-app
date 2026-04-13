@@ -19,6 +19,8 @@ COPY apps/frontend ./apps/frontend
 COPY packages ./packages
 COPY scripts ./scripts
 
+RUN npm run build:packages
+
 EXPOSE 3000 5173
 
-CMD ["npm", "run", "dev:web"]
+CMD ["npm", "run", "dev:web-stack"]
