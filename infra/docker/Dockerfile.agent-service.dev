@@ -15,5 +15,8 @@ RUN npm install
 COPY apps/agent-service ./apps/agent-service
 COPY packages ./packages
 
+RUN npm run build:packages
+
 ENV NODE_ENV=development
+WORKDIR /app
 CMD ["npm", "run", "dev:agent-service-stack"]

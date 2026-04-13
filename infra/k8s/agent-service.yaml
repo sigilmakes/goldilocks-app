@@ -62,16 +62,17 @@ spec:
             httpGet:
               path: /api/ready
               port: http
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: 5
+            periodSeconds: 5
             timeoutSeconds: 3
-            failureThreshold: 3
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /api/health
               port: http
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
             periodSeconds: 30
+            failureThreshold: 5
           lifecycle:
             preStop:
               exec:

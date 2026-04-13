@@ -12,7 +12,6 @@
     }
   },
   "scripts": {
-    "dev": "tsc -w --preserveWatchOutput",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'runtime: no lint configured'"

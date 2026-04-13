@@ -1,5 +1,5 @@
-# Dev-mode web stack: gateway (tsx watch) + package watchers + Vite.
-# Used by Tilt with live_update for scoped syncs.
+# Dev-mode web stack: gateway (tsx watch) + Vite.
+# Packages are pre-built in the image; Tilt live_update syncs source changes.
 
 FROM node:22-alpine
 

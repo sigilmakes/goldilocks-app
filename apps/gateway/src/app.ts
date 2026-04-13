@@ -15,7 +15,6 @@ import { fileURLToPath } from 'url';
 
 import { CONFIG } from '@goldilocks/config';
 import { getDb } from '@goldilocks/data';
-import { agentServiceFetch } from './agent/agent-service-client.js';
 import { getRelayMetrics } from './agent/relay-metrics.js';
 import authRoutes from './auth/routes.js';
 import conversationRoutes from './conversations/routes.js';
@@ -59,19 +58,10 @@ export function createApp() {
     res.json({ status: 'ok', timestamp: Date.now(), version: '0.1.0', service: 'gateway' });
   });
 
-  app.get('/api/ready', async (_req, res) => {
+  app.get('/api/ready', (_req, res) => {
     try {
       getDb().prepare('SELECT 1').get();
-      const response = await agentServiceFetch('/api/health', {
-        method: 'GET',
-        userId: 'system',
-        signal: AbortSignal.timeout(1_000),
-      });
-      if (!response.ok) {
-        res.status(503).json({ status: 'degraded', dependency: 'agent-service' });
-        return;
-      }
-      res.json({ status: 'ready', dependencies: { db: 'ok', agentService: 'ok' } });
+      res.json({ status: 'ready', dependencies: { db: 'ok' } });
     } catch (err) {
       res.status(503).json({
         status: 'degraded',

@@ -12,7 +12,6 @@
     }
   },
   "scripts": {
-    "dev": "tsc -w --preserveWatchOutput",
     "build": "tsc && cp -r src/migrations dist/",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'data: no lint configured'"
