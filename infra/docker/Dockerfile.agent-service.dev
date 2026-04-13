@@ -4,14 +4,16 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY server/package*.json ./server/
-COPY agent-service/package*.json ./agent-service/
-COPY frontend/package*.json ./frontend/
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY apps/agent-service/package.json ./apps/agent-service/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/config/package.json ./packages/config/package.json
+COPY packages/data/package.json ./packages/data/package.json
+COPY packages/runtime/package.json ./packages/runtime/package.json
 RUN npm install
 
-COPY . .
+COPY apps/agent-service ./apps/agent-service
+COPY packages ./packages
 
 ENV NODE_ENV=development
-WORKDIR /app
-CMD ["npm", "run", "dev", "-w", "agent-service"]
+CMD ["npm", "run", "dev:agent-service"]

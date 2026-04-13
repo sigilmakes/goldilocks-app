@@ -85,7 +85,7 @@ This prevents `useModelsStore` from reading a null `defaultModel` before setting
 
 ## File-Kind Resolution
 
-All file type classification lives in `frontend/src/lib/fileKinds.ts` — a single source of truth for viewer selection, icon mapping, and Monaco language configuration. Consumed by `FileViewer` (which viewer to load), `FileBrowser` (tree icon), and `MonacoEditor` (language).
+All file type classification lives in `apps/frontend/src/lib/fileKinds.ts` — a single source of truth for viewer selection, icon mapping, and Monaco language configuration. Consumed by `FileViewer` (which viewer to load), `FileBrowser` (tree icon), and `MonacoEditor` (language).
 
 ```ts
 resolveFileKind(path, monacoExtensions, imageExtensions): ResolvedFileKind
@@ -134,7 +134,7 @@ Top-level error boundary wrapping the entire app. Catches render errors and show
 
 ## API Client
 
-`frontend/src/api/client.ts` — thin typed wrapper around `fetch`. Auto-injects the Bearer token from `useAuthStore`. All endpoints return typed responses. Key exports:
+`apps/frontend/src/api/client.ts` — thin typed wrapper around `fetch`. Auto-injects the Bearer token from `useAuthStore`. All endpoints return typed responses. Key exports:
 
 - Auth: `login`, `register`, `fetchProfile`
 - Conversations: `fetchConversations`, `createConversation`, `renameConversation`, `deleteConversation`, `fetchMessages`
@@ -146,7 +146,7 @@ Top-level error boundary wrapping the entire app. Catches render errors and show
 
 ## Shared Types
 
-`shared/types.ts` — WebSocket message types used by both frontend (`useAgent.ts`) and server (`websocket.ts`). Zero runtime overhead — TypeScript only.
+`packages/contracts/src/websocket.ts` — WebSocket message types used by both frontend (`useAgent.ts`) and gateway (`websocket.ts`). Zero runtime overhead — TypeScript only.
 
 ```ts
 ClientMessage:  auth | open | prompt | abort

@@ -21,7 +21,6 @@ import {
   readdirSync, statSync, renameSync, existsSync,
 } from 'fs';
 import { join, resolve } from 'path';
-import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
@@ -37,10 +36,6 @@ export interface TestServer {
   stop: () => Promise<void>;
   registerUser: (overrides?: Partial<{ email: string; password: string; displayName: string }>) => Promise<TestUser>;
   authHeader: (user: TestUser) => string;
-}
-
-function projectRoot(): string {
-  return fileURLToPath(new URL('../../../', import.meta.url));
 }
 
 /**
@@ -238,15 +233,13 @@ async function createTestServer(): Promise<TestServer> {
   const workspaceRoot = `${dataDir}/workspaces`;
   mkdirSync(workspaceRoot, { recursive: true });
 
-  const root = projectRoot();
-
   process.env.DATA_DIR = dataDir;
   process.env.WORKSPACE_ROOT = workspaceRoot;
   process.env.JWT_SECRET = 'test-jwt-not-for-prod';
   process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
   process.env.NODE_ENV = 'test';
 
-  const { sessionManager } = await import(`file://${root}server/src/agent/sessions.js`);
+  const { sessionManager } = await import('@goldilocks/runtime');
 
   const stubPodManager = {
     async ensurePod(_userId: string) { /* no-op */ },
@@ -383,8 +376,8 @@ async function createTestServer(): Promise<TestServer> {
     configurable: true,
   });
 
-  const { createApp } = await import(`file://${root}server/src/app.js`);
-  const { runMigrations } = await import(`file://${root}server/src/db.js`);
+  const { createApp } = await import('../../../src/app.js');
+  const { runMigrations } = await import('@goldilocks/data');
 
   runMigrations();
   const app = createApp();
@@ -402,7 +395,7 @@ async function createTestServer(): Promise<TestServer> {
         async stop() {
           return new Promise<void>((res) => {
             server.close(async () => {
-              const { closeDb } = await import(`file://${root}server/src/db.js`);
+              const { closeDb } = await import('@goldilocks/data');
               closeDb();
               try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
               res();

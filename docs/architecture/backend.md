@@ -57,7 +57,7 @@ This keeps all tool execution in the pod (the "hands") while the SDK orchestrate
 Manages k8s infrastructure. Knows nothing about Pi or sessions. Handles:
 
 - **Pod lifecycle**: Create, verify, delete. Init container to fix hostPath permissions.
-- **Volume provisioning**: hostPath volumes at `./data/homes/{userId}/` on host, mounted at `/home/node` in pod
+- **Volume provisioning**: hostPath volumes inside the local kind state root, mounted at `/home/node` in the pod
 - **Exec**: Starts processes inside pods, returns stdin/stdout/stderr streams
 - **Idle timeout**: Evicts pods with no activity after 30 minutes
 - **Failure backoff**: Immediate → 5s → 30s → surface error to user
@@ -93,13 +93,13 @@ Lightweight counters tracked by the gateway:
 
 ## Agent Service Internals
 
-The agent-service (`agent-service/src/index.ts`) is a self-contained HTTP/WebSocket server that owns all Pi SDK state.
+The agent-service (`apps/agent-service/src/index.ts`) is a self-contained HTTP/WebSocket server that owns all Pi SDK state.
 
 ### Internal Auth
 
 Gateway connections authenticate with `{type: "auth", userId, gatewayToken}`. The `gatewayToken` must match `CONFIG.agentServiceSharedSecret`, which throws in production if the env var is not set.
 
-### Metrics (`agent-service/src/metrics.ts`)
+### Metrics (`apps/agent-service/src/metrics.ts`)
 
 - Gateway connections (total and active)
 - Active prompts and total prompt count

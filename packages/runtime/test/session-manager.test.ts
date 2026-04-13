@@ -66,7 +66,7 @@ vi.mock('@mariozechner/pi-coding-agent', () => {
   };
 });
 
-vi.mock('../../server/src/db.ts', () => ({
+vi.mock('@goldilocks/data', () => ({
   getDb: () => ({
     prepare: () => ({
       all: () => [],
@@ -74,8 +74,11 @@ vi.mock('../../server/src/db.ts', () => ({
   }),
 }));
 
-vi.mock('../../server/src/crypto.ts', () => ({ decrypt: (value: string) => value }));
-vi.mock('../../server/src/agent/pod-manager.ts', () => ({
+vi.mock('@goldilocks/config', () => ({
+  CONFIG: { dataDir: '/tmp/goldilocks-test' },
+  decrypt: (value: string) => value,
+}));
+vi.mock('../src/pod-manager.js', () => ({
   PodManager: class PodManager {
     ensurePod = vi.fn(async () => {});
     touch = vi.fn();
@@ -83,7 +86,7 @@ vi.mock('../../server/src/agent/pod-manager.ts', () => ({
     shutdown = vi.fn(async () => {});
   },
 }));
-vi.mock('../../server/src/agent/pod-tool-operations.ts', () => ({
+vi.mock('../src/pod-tool-operations.js', () => ({
   createPodToolOperations: () => ({
     read: {},
     bash: {},
@@ -105,7 +108,7 @@ describe('sessionManager conversation isolation', () => {
   });
 
   it('keeps separate session instances per conversation', async () => {
-    const { sessionManager } = await import('../../server/src/agent/sessions');
+    const { sessionManager } = await import('../src/session-manager');
 
     await sessionManager.switchSession('user-1', 'conv-a', null);
     const eventsA: unknown[] = [];

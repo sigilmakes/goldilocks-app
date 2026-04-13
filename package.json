@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "tilt up",
     "dev:down": "tilt down",
-    "dev:setup": "kind get clusters | grep -q goldilocks || kind create cluster --name goldilocks --config infra/kind/kind-config.yaml",
+    "dev:setup": "bash scripts/dev-setup.sh",
     "dev:reset": "kind delete cluster --name goldilocks",
     "build:packages": "npm run build -w @goldilocks/contracts && npm run build -w @goldilocks/config && npm run build -w @goldilocks/data && npm run build -w @goldilocks/runtime",
     "build:apps": "npm run build -w @goldilocks/gateway && npm run build -w @goldilocks/agent-service && npm run build -w @goldilocks/frontend",

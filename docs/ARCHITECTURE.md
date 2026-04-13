@@ -46,8 +46,8 @@ The HTTP/WebSocket server. Handles auth (JWT), serves the REST API, and relays W
 **Does not own:** Agent logic, session state, model inference, tool execution.
 
 Key files:
-- `server/src/agent/websocket.ts` — WS relay: browser auth → internal WS to agent-service
-- `server/src/agent/agent-service-client.ts` — HTTP proxy to agent-service for REST routes
+- `apps/gateway/src/agent/websocket.ts` — WS relay: browser auth → internal WS to agent-service
+- `apps/gateway/src/agent/agent-service-client.ts` — HTTP proxy to agent-service for REST routes
 
 ### Agent Service
 
@@ -79,7 +79,7 @@ sequenceDiagram
 
 **Does not own:** User auth, conversation metadata DB, static file serving.
 
-Key file: `agent-service/src/index.ts`
+Key file: `apps/agent-service/src/index.ts`
 
 ### Pod Tool Operations
 
@@ -91,7 +91,7 @@ Rather than the Pi SDK running tools locally, Goldilocks provides pluggable oper
 - `EditOperations.readFile/writeFile()` → same as read/write
 - `FindOperations`, `GrepOperations`, `LsOperations` → shell commands in the pod
 
-**Key file:** `server/src/agent/pod-tool-operations.ts`
+**Key file:** `packages/runtime/src/pod-tool-operations.ts`
 
 ### Pod Manager
 
@@ -101,7 +101,7 @@ Manages k8s resources. Creates pods and hostPath volumes per user, execs command
 
 **Does not own:** Pi sessions, RPC protocol, conversations.
 
-**Key file:** `server/src/agent/pod-manager.ts`
+**Key file:** `packages/runtime/src/pod-manager.ts`
 
 ### Sandbox Pod
 
@@ -113,7 +113,7 @@ graph LR
         Sleep["CMD: sleep infinity"]
     end
     subgraph Volumes
-        Home["/home/node<br/>hostPath → ./data/homes/userId/"]
+        Home["/home/node<br/>hostPath → kind state root / homes / userId"]
         Tmp["/tmp<br/>emptyDir"]
     end
     Home --> Pod

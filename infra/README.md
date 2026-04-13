@@ -24,7 +24,7 @@ tilt up
 
 ## Files
 
-- `deploy/docker/Dockerfile.agent` — Agent container (pi installed, `sleep infinity`)
-- `deploy/docker/Dockerfile.web.dev` — Dev web app container (tsx + vite)
-- `deploy/kind-config.yaml` — Kind cluster configuration
-- `k8s/` — Kubernetes manifests (namespace, RBAC, web-app deployment)
+- `infra/docker/Dockerfile.agent` — Agent container (`sleep infinity` sandbox)
+- `infra/docker/Dockerfile.web.dev` — Dev web stack container (gateway + Vite)
+- `infra/kind/kind-config.template.yaml` — Kind config template used by `scripts/dev-setup.sh`
+- `infra/k8s/` — Kubernetes manifests used by Tilt

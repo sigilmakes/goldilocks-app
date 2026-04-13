@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PodManager } from '../../server/src/agent/pod-manager';
+import { PodManager } from '../src/pod-manager';
 
 describe('PodManager', () => {
   it('does not inject provider API keys into sandbox pod env', () => {

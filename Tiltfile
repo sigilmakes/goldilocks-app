@@ -2,6 +2,8 @@
 
 update_settings(suppress_unused_image_warnings=['goldilocks-agent'])
 
+update_settings(max_parallel_updates=3)
+
 # ── Dev Secrets ──
 # Generate deterministic dev secrets so `tilt up` works with zero manual steps.
 # Production uses real secrets created out-of-band.
@@ -20,56 +22,94 @@ stringData:
 
 # ── k8s Infrastructure ──
 k8s_yaml([
-    'k8s/namespace.yaml',
-    'k8s/rbac.yaml',
-    'dashboard/k8s/headlamp-rbac.yaml',
-    'dashboard/k8s/headlamp.yaml',
+    'infra/k8s/namespace.yaml',
+    'infra/k8s/rbac.yaml',
+    'ops/headlamp/k8s/headlamp-rbac.yaml',
+    'ops/headlamp/k8s/headlamp.yaml',
 ])
 
 # ── Web App ──
 docker_build(
     'goldilocks-web',
     '.',
-    dockerfile='deploy/docker/Dockerfile.web.dev',
+    dockerfile='infra/docker/Dockerfile.web.dev',
+    only=[
+        'package.json',
+        'package-lock.json',
+        'tsconfig.base.json',
+        'tsconfig.json',
+        'apps/gateway',
+        'apps/frontend',
+        'packages/contracts',
+        'packages/config',
+        'packages/data',
+        'packages/runtime',
+        'scripts/goldilocks',
+        'infra/docker/Dockerfile.web.dev',
+    ],
     live_update=[
-        # Deps: full rebuild when package files change
         fall_back_on([
             './package.json',
-            './server/package.json',
-            './frontend/package.json',
             './package-lock.json',
+            './tsconfig.base.json',
+            './tsconfig.json',
+            './apps/gateway/package.json',
+            './apps/frontend/package.json',
+            './packages/contracts/package.json',
+            './packages/config/package.json',
+            './packages/data/package.json',
+            './packages/runtime/package.json',
         ]),
-
-        # Frontend: sync source files, Vite HMR handles the rest
-        sync('./frontend/src', '/app/frontend/src'),
-        sync('./frontend/index.html', '/app/frontend/index.html'),
-        sync('./frontend/vite.config.ts', '/app/frontend/vite.config.ts'),
-
-        # Server: sync source, tsx watch auto-restarts
-        sync('./server/src', '/app/server/src'),
-
-        # Shared types
-        sync('./shared', '/app/shared'),
+        sync('./apps/gateway/src', '/app/apps/gateway/src'),
+        sync('./apps/frontend/src', '/app/apps/frontend/src'),
+        sync('./apps/frontend/index.html', '/app/apps/frontend/index.html'),
+        sync('./apps/frontend/vite.config.ts', '/app/apps/frontend/vite.config.ts'),
+        sync('./packages/contracts/src', '/app/packages/contracts/src'),
+        sync('./packages/config/src', '/app/packages/config/src'),
+        sync('./packages/data/src', '/app/packages/data/src'),
+        sync('./packages/runtime/src', '/app/packages/runtime/src'),
+        sync('./scripts/goldilocks', '/app/scripts/goldilocks'),
     ],
 )
 
 docker_build(
     'goldilocks-agent-service',
     '.',
-    dockerfile='deploy/docker/Dockerfile.agent-service.dev',
+    dockerfile='infra/docker/Dockerfile.agent-service.dev',
+    only=[
+        'package.json',
+        'package-lock.json',
+        'tsconfig.base.json',
+        'tsconfig.json',
+        'apps/agent-service',
+        'packages/contracts',
+        'packages/config',
+        'packages/data',
+        'packages/runtime',
+        'infra/docker/Dockerfile.agent-service.dev',
+    ],
     live_update=[
         fall_back_on([
             './package.json',
-            './server/package.json',
-            './agent-service/package.json',
             './package-lock.json',
+            './tsconfig.base.json',
+            './tsconfig.json',
+            './apps/agent-service/package.json',
+            './packages/contracts/package.json',
+            './packages/config/package.json',
+            './packages/data/package.json',
+            './packages/runtime/package.json',
         ]),
-        sync('./agent-service/src', '/app/agent-service/src'),
-        sync('./server/src', '/app/server/src'),
+        sync('./apps/agent-service/src', '/app/apps/agent-service/src'),
+        sync('./packages/contracts/src', '/app/packages/contracts/src'),
+        sync('./packages/config/src', '/app/packages/config/src'),
+        sync('./packages/data/src', '/app/packages/data/src'),
+        sync('./packages/runtime/src', '/app/packages/runtime/src'),
     ],
 )
 
-k8s_yaml(['k8s/web-app.yaml', 'k8s/agent-service.yaml', 'k8s/web-app-hpa.yaml', 'k8s/agent-service-hpa.yaml'])
+# Intentionally omit HPAs in local kind dev to reduce rollout churn and noisy restarts.
+k8s_yaml(['infra/k8s/web-app.yaml', 'infra/k8s/agent-service.yaml'])
 k8s_resource(
     'web-app',
     port_forwards=['3000:3000', '5173:5173'],
@@ -89,10 +129,10 @@ k8s_resource(
 
 local_resource(
     'headlamp-token',
-    './dashboard/scripts/generate-headlamp-token.sh',
+    './ops/headlamp/scripts/generate-headlamp-token.sh',
     deps=[
-        'dashboard/scripts/generate-headlamp-token.sh',
-        'dashboard/k8s/headlamp-rbac.yaml',
+        'ops/headlamp/scripts/generate-headlamp-token.sh',
+        'ops/headlamp/k8s/headlamp-rbac.yaml',
     ],
     resource_deps=['headlamp'],
     labels=['ops'],
@@ -104,7 +144,7 @@ local_resource(
 # so we use local_resource to build + explicitly load into kind.
 local_resource(
     'agent-image',
-    'docker build -t goldilocks-agent:latest -f deploy/docker/Dockerfile.agent . && kind load docker-image goldilocks-agent:latest --name goldilocks',
-    deps=['deploy/docker/Dockerfile.agent'],
+    'docker build -t goldilocks-agent:latest -f infra/docker/Dockerfile.agent . && kind load docker-image goldilocks-agent:latest --name goldilocks',
+    deps=['infra/docker/Dockerfile.agent'],
     labels=['build'],
 )

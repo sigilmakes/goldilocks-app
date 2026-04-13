@@ -25,7 +25,7 @@ graph TD
 
 ### Kind Cluster Configuration
 
-The kind cluster is configured via `deploy/kind-config.yaml`:
+`npm run dev:setup` generates a kind config from `infra/kind/kind-config.template.yaml`:
 
 ```yaml
 kind: Cluster
@@ -115,6 +115,6 @@ Two k8s Services for the agent-service:
 Created by the Pod Manager when a user first interacts. Each pod has:
 - **Init container**: Runs as root to `chown` the hostPath volume for uid 1000
 - **Main container**: Runs as uid 1000, `sleep infinity` — tools are exec'd in
-- **Home volume**: hostPath at `./data/homes/{userId}/` → `/home/node`
+- **Home volume**: hostPath under the local kind state root → `/home/node`
 - **Tmp volume**: emptyDir for scratch space
 - **No env vars with provider keys** — credentials stay in the agent-service

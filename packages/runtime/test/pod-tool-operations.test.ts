@@ -1,6 +1,6 @@
 import { PassThrough } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
-import { createPodToolOperations } from '../../server/src/agent/pod-tool-operations';
+import { createPodToolOperations } from '../src/pod-tool-operations';
 
 function createExecStreams() {
   const stdout = new PassThrough();

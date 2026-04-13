@@ -12,7 +12,7 @@ describe('CONFIG.agentServiceSharedSecret', () => {
     delete process.env.AGENT_SERVICE_SHARED_SECRET;
     process.env.NODE_ENV = 'development';
 
-    const { CONFIG } = await import('../../server/src/config');
+    const { CONFIG } = await import('../src/index');
     expect(CONFIG.agentServiceSharedSecret).toBe('dev-agent-service-secret');
   });
 
@@ -20,7 +20,7 @@ describe('CONFIG.agentServiceSharedSecret', () => {
     delete process.env.AGENT_SERVICE_SHARED_SECRET;
     process.env.NODE_ENV = 'production';
 
-    const { CONFIG } = await import('../../server/src/config');
+    const { CONFIG } = await import('../src/index');
     expect(() => CONFIG.agentServiceSharedSecret).toThrow('AGENT_SERVICE_SHARED_SECRET must be set in production');
   });
 });
