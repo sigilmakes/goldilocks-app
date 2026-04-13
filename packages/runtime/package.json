@@ -1,0 +1,33 @@
+{
+  "name": "@goldilocks/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "tsc -w --preserveWatchOutput",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'runtime: no lint configured'"
+  },
+  "dependencies": {
+    "@goldilocks/config": "file:../config",
+    "@goldilocks/data": "file:../data",
+    "@kubernetes/client-node": "^1.4.0",
+    "@mariozechner/pi-agent-core": "^0.64.0",
+    "@mariozechner/pi-coding-agent": "^0.64.0",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.3"
+  }
+}

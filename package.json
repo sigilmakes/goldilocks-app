@@ -4,28 +4,29 @@
   "private": true,
   "description": "React web app with embedded pi agent for DFT input file generation",
   "workspaces": [
-    "server",
-    "agent-service",
-    "frontend"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "dev": "tilt up",
     "dev:down": "tilt down",
-    "dev:setup": "kind get clusters | grep -q goldilocks || kind create cluster --name goldilocks --config deploy/kind-config.yaml",
+    "dev:setup": "kind get clusters | grep -q goldilocks || kind create cluster --name goldilocks --config infra/kind/kind-config.yaml",
     "dev:reset": "kind delete cluster --name goldilocks",
-    "dev:server": "npm run dev -w server",
-    "dev:agent-service": "npm run dev -w agent-service",
-    "dev:frontend": "npm run dev -w frontend",
-    "dev:web": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w frontend -- --host 0.0.0.0\"",
-    "dev:both": "concurrently \"PORT=3000 npm run dev -w server\" \"npm run dev -w agent-service\" \"npm run dev -w frontend -- --host 0.0.0.0\"",
-    "build": "npm run build -w server && npm run build -w agent-service && npm run build -w frontend",
-    "start": "npm run start -w server",
-    "lint": "npm run lint -w server && npm run lint -w agent-service && npm run lint -w frontend",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w agent-service && npm run typecheck -w frontend",
+    "build:packages": "npm run build -w @goldilocks/contracts && npm run build -w @goldilocks/config && npm run build -w @goldilocks/data && npm run build -w @goldilocks/runtime",
+    "build:apps": "npm run build -w @goldilocks/gateway && npm run build -w @goldilocks/agent-service && npm run build -w @goldilocks/frontend",
+    "dev:gateway": "npm run dev -w @goldilocks/gateway",
+    "dev:agent-service": "npm run dev -w @goldilocks/agent-service",
+    "dev:frontend": "npm run dev -w @goldilocks/frontend",
+    "dev:web": "npm run build:packages && concurrently \"npm run dev -w @goldilocks/contracts\" \"npm run dev -w @goldilocks/config\" \"npm run dev -w @goldilocks/data\" \"npm run dev -w @goldilocks/runtime\" \"PORT=3000 npm run dev -w @goldilocks/gateway\" \"npm run dev -w @goldilocks/frontend -- --host 0.0.0.0\"",
+    "dev:both": "npm run build:packages && concurrently \"npm run dev -w @goldilocks/contracts\" \"npm run dev -w @goldilocks/config\" \"npm run dev -w @goldilocks/data\" \"npm run dev -w @goldilocks/runtime\" \"PORT=3000 npm run dev -w @goldilocks/gateway\" \"npm run dev -w @goldilocks/agent-service\" \"npm run dev -w @goldilocks/frontend -- --host 0.0.0.0\"",
+    "build": "npm run build:packages && npm run build:apps",
+    "start": "npm run start -w @goldilocks/gateway",
+    "lint": "npm run lint -w @goldilocks/contracts && npm run lint -w @goldilocks/config && npm run lint -w @goldilocks/data && npm run lint -w @goldilocks/runtime && npm run lint -w @goldilocks/gateway && npm run lint -w @goldilocks/agent-service && npm run lint -w @goldilocks/frontend",
+    "typecheck": "npm run typecheck -w @goldilocks/contracts && npm run typecheck -w @goldilocks/config && npm run typecheck -w @goldilocks/data && npm run typecheck -w @goldilocks/runtime && npm run typecheck -w @goldilocks/gateway && npm run typecheck -w @goldilocks/agent-service && npm run typecheck -w @goldilocks/frontend",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "smoke": "bash test/smoke-test.sh"
+    "smoke": "bash apps/gateway/test/smoke-test.sh"
   },
   "devDependencies": {
     "@vitest/ui": "^4.1.4",
