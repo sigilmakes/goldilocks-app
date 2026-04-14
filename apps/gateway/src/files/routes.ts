@@ -27,6 +27,19 @@ import { verifyToken, AuthRequest } from '../auth/middleware.js';
 const router = Router();
 const SEARCH_LIMIT = 50;
 const SEARCH_MAX_DEPTH = 2;
+const ALLOWED_UPLOAD_CONTENT_TYPES = new Set([
+  'application/json',
+  'application/octet-stream',
+  'application/pdf',
+  'application/xml',
+  'application/yaml',
+  'application/x-yaml',
+  'text/csv',
+  'text/html',
+  'text/markdown',
+  'text/plain',
+  'text/xml',
+]);
 
 router.use(verifyToken);
 
@@ -266,6 +279,17 @@ function invalidPathResponse(res: Response): void {
   res.status(400).json({ error: 'Invalid path' });
 }
 
+function isAllowedUploadContentType(contentType: string): boolean {
+  const normalized = contentType.split(';')[0]?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.startsWith('text/')
+    || normalized.startsWith('image/')
+    || ALLOWED_UPLOAD_CONTENT_TYPES.has(normalized);
+}
+
 // --- Route 1: GET / -- List workspace files as a tree ------------------------
 
 router.get('/', async (req: AuthRequest, res: Response) => {
@@ -297,10 +321,15 @@ router.post('/upload', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const { filename, content } = req.body as { filename?: string; content?: string };
+  const { filename, content, contentType } = req.body as { filename?: string; content?: string; contentType?: string };
 
-  if (!filename || !content) {
-    res.status(400).json({ error: 'filename and content are required' });
+  if (!filename || !content || !contentType) {
+    res.status(400).json({ error: 'filename, content, and contentType are required' });
+    return;
+  }
+
+  if (!isAllowedUploadContentType(contentType)) {
+    res.status(400).json({ error: `Unsupported content type: ${contentType}` });
     return;
   }
 
@@ -314,7 +343,13 @@ router.post('/upload', async (req: AuthRequest, res: Response) => {
     const fileBuffer = Buffer.from(content, 'base64');
     await writeUserFile(req.user.id, safeName, fileBuffer);
 
-    res.status(201).json({ ok: true, name: safeName.split('/').pop() ?? safeName, path: safeName, size: fileBuffer.length });
+    res.status(201).json({
+      ok: true,
+      name: safeName.split('/').pop() ?? safeName,
+      path: safeName,
+      size: fileBuffer.length,
+      contentType: contentType.split(';')[0]?.trim().toLowerCase(),
+    });
   } catch (err) {
     if (err instanceof Error && err.message === 'Invalid path') {
       invalidPathResponse(res);

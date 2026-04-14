@@ -6,16 +6,18 @@
  *   - test/api/helpers/test-server.ts: to create an isolated test server
  */
 
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import helmet, { type HelmetOptions } from 'helmet';
 import { existsSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 import { CONFIG } from '@goldilocks/config';
 import { getDb } from '@goldilocks/data';
+import { getRequestToken, verifySignedToken } from './auth/middleware.js';
 import { getRelayMetrics } from './agent/relay-metrics.js';
 import authRoutes from './auth/routes.js';
 import conversationRoutes from './conversations/routes.js';
@@ -38,6 +40,68 @@ function getAllowedCorsOrigins(): Set<string> {
   return origins;
 }
 
+function getHelmetOptions(): Readonly<HelmetOptions> {
+  const directives: Record<string, string[]> = {
+    'connect-src': ["'self'"],
+    'script-src': ["'self'"],
+    'style-src': ["'self'"],
+  };
+
+  if (!CONFIG.isProd) {
+    directives['connect-src'] = [
+      "'self'",
+      ...CONFIG.allowedWebSocketOrigins,
+      'ws://localhost:5173',
+      'ws://127.0.0.1:5173',
+    ];
+    directives['script-src'] = ["'self'", "'unsafe-inline'", "'unsafe-eval'"];
+    directives['style-src'] = ["'self'", "'unsafe-inline'"];
+  }
+
+  const options: HelmetOptions = {
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives,
+    },
+  };
+
+  if (!CONFIG.isProd) {
+    options.crossOriginEmbedderPolicy = false;
+  }
+
+  return options;
+}
+
+function parseJsonBody(req: Request, res: Response, next: NextFunction): void {
+  const jsonParser = req.path.startsWith('/api/files')
+    ? express.json({ limit: CONFIG.fileUploadBodyLimit })
+    : express.json();
+
+  jsonParser(req, res, next);
+}
+
+export function getRateLimitKey(req: Pick<Request, 'headers' | 'ip'> & { cookies?: Record<string, string> }): string {
+  const token = getRequestToken(req as Request);
+
+  if (token) {
+    try {
+      return verifySignedToken(token).id;
+    } catch {
+      // Invalid or revoked tokens fall back to IP bucketing.
+    }
+  }
+
+  return ipKeyGenerator(req.ip ?? '127.0.0.1');
+}
+
+export function buildReadinessFailureResponse(err: unknown) {
+  console.error('Readiness check failed:', err);
+  return {
+    status: 'degraded' as const,
+    error: 'Service unavailable',
+  };
+}
+
 export function createApp() {
   const app = express();
   const allowedOrigins = getAllowedCorsOrigins();
@@ -54,8 +118,9 @@ export function createApp() {
     },
     credentials: true,
   }));
+  app.use(helmet(getHelmetOptions()));
   app.use(cookieParser());
-  app.use(express.json());
+  app.use(parseJsonBody);
 
   // Rate limiting
   const limiter = rateLimit({
@@ -63,6 +128,7 @@ export function createApp() {
     max: CONFIG.isProd ? 60 : 300,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
     message: { error: 'Too many requests, please try again later' },
   });
   app.use('/api', limiter);
@@ -70,9 +136,22 @@ export function createApp() {
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
     message: { error: 'Too many auth attempts, please try again later' },
   });
   app.use('/api/auth', authLimiter);
+
+  const registerLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.ip ?? '127.0.0.1'),
+    message: { error: 'Too many registration attempts, please try again later' },
+  });
+  app.use('/api/auth/register', registerLimiter);
 
   // Health check
   app.get('/api/health', (_req, res) => {
@@ -84,10 +163,7 @@ export function createApp() {
       getDb().prepare('SELECT 1').get();
       res.json({ status: 'ready', dependencies: { db: 'ok' } });
     } catch (err) {
-      res.status(503).json({
-        status: 'degraded',
-        error: err instanceof Error ? err.message : 'Readiness check failed',
-      });
+      res.status(503).json(buildReadinessFailureResponse(err));
     }
   });
 
@@ -104,6 +180,22 @@ export function createApp() {
   app.use('/api/structures', structureRoutes);
   app.use('/api/library', libraryRouter);
   app.use('/api', quickgenRoutes);
+
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api')) {
+      if (typeof err === 'object' && err !== null && 'type' in err && err.type === 'entity.too.large') {
+        res.status(413).json({ error: `File upload exceeds limit of ${CONFIG.fileUploadMaxBytes} bytes` });
+        return;
+      }
+
+      if (err instanceof SyntaxError && 'body' in err) {
+        res.status(400).json({ error: 'Invalid JSON body' });
+        return;
+      }
+    }
+
+    next(err);
+  });
 
   // Static file serving (frontend dist)
   const frontendDist = resolve(__dirname, '../../frontend/dist');

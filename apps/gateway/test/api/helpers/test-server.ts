@@ -40,6 +40,10 @@ export interface TestServer {
   cookieHeader: (user: TestUser) => string;
 }
 
+interface TestServerOptions {
+  env?: Record<string, string | undefined>;
+}
+
 /**
  * Create a stream that emits `data` events with Buffer content, then `end`.
  * If content is null, emits an `error` event instead (simulates command failure
@@ -229,19 +233,30 @@ function parseCommand(command: string[]): {
   return { op: 'unknown' };
 }
 
-async function createTestServer(): Promise<TestServer> {
+async function createTestServer(options: TestServerOptions = {}): Promise<TestServer> {
   const testId = randomUUID().slice(0, 8);
   const dataDir = `/tmp/goldilocks-test-${testId}`;
   const workspaceRoot = `${dataDir}/workspaces`;
   mkdirSync(workspaceRoot, { recursive: true });
 
-  process.env.DATA_DIR = dataDir;
-  process.env.WORKSPACE_ROOT = workspaceRoot;
-  process.env.JWT_SECRET = 'test-jwt-not-for-prod';
-  process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
-  process.env.AGENT_SERVICE_SHARED_SECRET = 'test-agent-shared-secret';
-  process.env.NODE_ENV = 'test';
-  process.env.FRONTEND_URL = 'http://localhost:5173';
+  const nextEnv: Record<string, string> = {
+    DATA_DIR: dataDir,
+    WORKSPACE_ROOT: workspaceRoot,
+    JWT_SECRET: 'test-jwt-not-for-prod',
+    ENCRYPTION_KEY: 'test-encryption-key-32bytes!!',
+    AGENT_SERVICE_SHARED_SECRET: 'test-agent-shared-secret',
+    NODE_ENV: 'test',
+    FRONTEND_URL: 'http://localhost:5173',
+    ...Object.fromEntries(
+      Object.entries(options.env ?? {}).filter(([, value]): value is string => value !== undefined)
+    ),
+  };
+
+  const previousEnv = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(nextEnv)) {
+    previousEnv.set(key, process.env[key]);
+    process.env[key] = value;
+  }
 
   const { sessionManager } = await import('@goldilocks/runtime');
 
@@ -407,6 +422,13 @@ async function createTestServer(): Promise<TestServer> {
             server.close(async () => {
               const { closeDb } = await import('@goldilocks/data');
               closeDb();
+              for (const [key, value] of previousEnv.entries()) {
+                if (value === undefined) {
+                  delete process.env[key];
+                } else {
+                  process.env[key] = value;
+                }
+              }
               try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
               res();
             });

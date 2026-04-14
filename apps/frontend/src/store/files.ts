@@ -79,7 +79,11 @@ export const useFilesStore = create<FilesState>((set, get) => ({
         reader.readAsDataURL(file);
       });
 
-      const res = await api.post<{ ok: true; name: string; path: string; size: number }>('/files/upload', { filename: file.name, content });
+      const res = await api.post<{ ok: true; name: string; path: string; size: number }>('/files/upload', {
+        filename: file.name,
+        content,
+        contentType: file.type || 'application/octet-stream',
+      });
       set((state) => ({
         files: state.files.some((existing) => existing.path === res.path)
           ? state.files
