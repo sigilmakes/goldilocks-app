@@ -7,6 +7,7 @@
  */
 
 import express from 'express';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { existsSync } from 'fs';
@@ -26,14 +27,34 @@ import quickgenRoutes from './quickgen/routes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+function getAllowedCorsOrigins(): Set<string> {
+  const origins = new Set<string>([CONFIG.frontendUrl]);
+
+  if (!CONFIG.isProd) {
+    origins.add('http://localhost:5173');
+    origins.add('http://127.0.0.1:5173');
+  }
+
+  return origins;
+}
+
 export function createApp() {
   const app = express();
+  const allowedOrigins = getAllowedCorsOrigins();
 
   // Middleware
-  app.use(cors(CONFIG.isProd ? {
-    origin: process.env.CORS_ORIGIN ?? false,
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin ${origin} is not allowed by CORS`));
+    },
     credentials: true,
-  } : {}));
+  }));
+  app.use(cookieParser());
   app.use(express.json());
 
   // Rate limiting

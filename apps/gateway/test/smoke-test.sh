@@ -123,12 +123,15 @@ req_no_auth() {
     2>/dev/null
 }
 
-register_and_get_token() {
+register_and_capture_session() {
   local email=$1
   local password=$2
-  req_no_auth POST /api/auth/register \
+  local cookie_jar=$3
+  curl -s -c "$cookie_jar" -X POST \
+    -H 'Content-Type: application/json' \
     -d "{\"email\":\"$email\",\"password\":\"$password\",\"displayName\":\"Smoke Test\"}" \
-    | jq -r '.token // empty'
+    "$BASE/api/auth/register" \
+    2>/dev/null
 }
 
 # ── Health ──────────────────────────────────────────────────────────────────
@@ -150,16 +153,18 @@ note "Auth"
 EMAIL="smoke-$(date +%s)@example.com"
 PASSWORD="SmokeTest123!"
 
-TOKEN=$(register_and_get_token "$EMAIL" "$PASSWORD")
+COOKIE_JAR=$(mktemp)
+REGISTER=$(register_and_capture_session "$EMAIL" "$PASSWORD" "$COOKIE_JAR")
+TOKEN=$(awk '$6 == "goldilocks-session" { print $7 }' "$COOKIE_JAR" | tail -n1)
 if [[ -n "$TOKEN" && "$TOKEN" != "empty" ]]; then
-  pass "register → JWT token"
+  pass "register → session cookie"
 else
-  fail "register failed"
+  fail "register failed: $REGISTER"
   TOKEN=""
 fi
 
 if [[ -n "$TOKEN" ]]; then
-  ME=$(curl -s "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+  ME=$(curl -s -b "$COOKIE_JAR" "$BASE/api/auth/me" 2>/dev/null) || true
   if echo "$ME" | jq -r '.user.email' 2>/dev/null | grep -q "$EMAIL"; then
     pass "GET /api/auth/me → correct user"
   else
@@ -182,16 +187,15 @@ note "Conversations"
 if [[ -z "$TOKEN" ]]; then
   skip "auth failed, skipping conversations"
 else
-  CONV=$(curl -s -X POST "$BASE/api/conversations" \
+  CONV=$(curl -s -b "$COOKIE_JAR" -X POST "$BASE/api/conversations" \
     -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer $TOKEN" \
     -d '{"title":"Smoke Test Conv"}' 2>/dev/null) || true
   CONV_ID=$(echo "$CONV" | jq -r '.conversation.id // empty' 2>/dev/null) || true
 
   if [[ -n "$CONV_ID" && "$CONV_ID" != "empty" ]]; then
     pass "create conversation → $CONV_ID"
 
-    CONVS=$(curl -s "$BASE/api/conversations" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+    CONVS=$(curl -s -b "$COOKIE_JAR" "$BASE/api/conversations" 2>/dev/null) || true
     COUNT=$(echo "$CONVS" | jq '.conversations | length' 2>/dev/null) || COUNT=0
     if [[ "$COUNT" -ge 1 ]]; then
       pass "list conversations → $COUNT found"
@@ -199,9 +203,8 @@ else
       fail "list conversations returned $COUNT"
     fi
 
-    RENAMED=$(curl -s -X PATCH "$BASE/api/conversations/$CONV_ID" \
+    RENAMED=$(curl -s -b "$COOKIE_JAR" -X PATCH "$BASE/api/conversations/$CONV_ID" \
       -H 'Content-Type: application/json' \
-      -H "Authorization: Bearer $TOKEN" \
       -d '{"title":"Renamed by Smoke Test"}' 2>/dev/null) || true
     if echo "$RENAMED" | jq -r '.conversation.title' 2>/dev/null | grep -q "Renamed by Smoke Test"; then
       pass "rename conversation"
@@ -209,8 +212,7 @@ else
       fail "rename failed: $RENAMED"
     fi
 
-    DELETED=$(curl -s -X DELETE "$BASE/api/conversations/$CONV_ID" \
-      -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+    DELETED=$(curl -s -b "$COOKIE_JAR" -X DELETE "$BASE/api/conversations/$CONV_ID" 2>/dev/null) || true
     if echo "$DELETED" | jq -r '.ok' 2>/dev/null | grep -q 'true'; then
       pass "delete conversation"
     else
@@ -235,16 +237,15 @@ note "Settings"
 if [[ -z "$TOKEN" ]]; then
   skip "auth failed, skipping settings"
 else
-  GET=$(curl -s "$BASE/api/settings" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+  GET=$(curl -s -b "$COOKIE_JAR" "$BASE/api/settings" 2>/dev/null) || true
   if echo "$GET" | jq -r '.settings' >/dev/null 2>&1; then
     pass "GET /api/settings → { settings: {...} }"
   else
     fail "GET settings failed: $GET"
   fi
 
-  PATCH=$(curl -s -X PATCH "$BASE/api/settings" \
+  PATCH=$(curl -s -b "$COOKIE_JAR" -X PATCH "$BASE/api/settings" \
     -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer $TOKEN" \
     -d '{"defaultModel":"claude-sonnet-4-20250514"}' 2>/dev/null) || true
   if echo "$PATCH" | jq -r '.settings.defaultModel' 2>/dev/null | grep -q 'claude-sonnet'; then
     pass "PATCH /api/settings → merge works"
@@ -252,7 +253,7 @@ else
     fail "PATCH settings failed: $PATCH"
   fi
 
-  KEYS=$(curl -s "$BASE/api/settings/api-keys" -H "Authorization: Bearer $TOKEN" 2>/dev/null) || true
+  KEYS=$(curl -s -b "$COOKIE_JAR" "$BASE/api/settings/api-keys" 2>/dev/null) || true
   if echo "$KEYS" | jq -r '.apiKeys' >/dev/null 2>&1; then
     pass "GET /api/settings/api-keys → key list returned"
   else

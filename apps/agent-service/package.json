@@ -17,10 +17,12 @@
     "@goldilocks/data": "file:../../packages/data",
     "@goldilocks/runtime": "file:../../packages/runtime",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
     "ws": "^8.18.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.2",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.15.3",
     "@types/ws": "^8.18.1",
     "tsx": "^4.19.4",

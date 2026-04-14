@@ -5,6 +5,7 @@ config();
 
 const defaultStateDir = resolve(process.cwd(), '.dev');
 const dataDir = process.env.DATA_DIR ?? (process.env.GOLDILOCKS_STATE_DIR ? resolve(process.env.GOLDILOCKS_STATE_DIR) : defaultStateDir);
+const sessionCookieMaxAgeMs = parseInt(process.env.SESSION_COOKIE_MAX_AGE_MS ?? '28800000', 10);
 
 function requireEnv(name: 'JWT_SECRET' | 'ENCRYPTION_KEY' | 'AGENT_SERVICE_SHARED_SECRET'): string {
   const value = process.env[name]?.trim();
@@ -26,9 +27,28 @@ export const CONFIG = {
   get jwtSecret(): string {
     return requireEnv('JWT_SECRET');
   },
-  jwtExpiresIn: '7d',
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '8h',
+  jwtIssuer: 'goldilocks-gateway',
+  jwtAudience: 'goldilocks-api',
+  sessionCookieName: process.env.SESSION_COOKIE_NAME ?? 'goldilocks-session',
+  sessionCookieMaxAgeMs,
   get encryptionKey(): string {
     return requireEnv('ENCRYPTION_KEY');
+  },
+
+  get frontendUrl(): string {
+    return process.env.FRONTEND_URL ?? (this.isProd ? `http://localhost:${this.port}` : 'http://localhost:5173');
+  },
+
+  get allowedWebSocketOrigins(): string[] {
+    const origins = new Set<string>([this.frontendUrl]);
+
+    if (!this.isProd) {
+      origins.add('http://localhost:5173');
+      origins.add('http://127.0.0.1:5173');
+    }
+
+    return [...origins];
   },
 
   // k8s

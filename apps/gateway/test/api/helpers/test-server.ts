@@ -26,6 +26,7 @@ import { EventEmitter } from 'events';
 
 export interface TestUser {
   token: string;
+  cookie: string;
   userId: string;
   email: string;
 }
@@ -36,6 +37,7 @@ export interface TestServer {
   stop: () => Promise<void>;
   registerUser: (overrides?: Partial<{ email: string; password: string; displayName: string }>) => Promise<TestUser>;
   authHeader: (user: TestUser) => string;
+  cookieHeader: (user: TestUser) => string;
 }
 
 /**
@@ -239,6 +241,7 @@ async function createTestServer(): Promise<TestServer> {
   process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
   process.env.AGENT_SERVICE_SHARED_SECRET = 'test-agent-shared-secret';
   process.env.NODE_ENV = 'test';
+  process.env.FRONTEND_URL = 'http://localhost:5173';
 
   const { sessionManager } = await import('@goldilocks/runtime');
 
@@ -425,12 +428,23 @@ async function createTestServer(): Promise<TestServer> {
             throw new Error(`Register failed: ${res.status} ${await res.text()}`);
           }
 
-          const json = await res.json() as { token: string; user: { id: string } };
-          return { token: json.token, userId: json.user.id, email };
+          const json = await res.json() as { user: { id: string } };
+          const setCookie = res.headers.get('set-cookie');
+          if (!setCookie) {
+            throw new Error('Register response missing session cookie');
+          }
+
+          const cookie = setCookie.split(';')[0];
+          const cookieValue = cookie.split('=').slice(1).join('=');
+          return { token: decodeURIComponent(cookieValue), cookie, userId: json.user.id, email };
         },
 
         authHeader(user: TestUser) {
           return `Bearer ${user.token}`;
+        },
+
+        cookieHeader(user: TestUser) {
+          return user.cookie;
         },
       });
     });

@@ -1,5 +1,3 @@
-import { useAuthStore } from '../store/auth';
-
 const API_BASE = '/api';
 
 class ApiError extends Error {
@@ -18,32 +16,27 @@ async function request<T>(
   path: string,
   data?: unknown
 ): Promise<T> {
-  const token = useAuthStore.getState().token;
-  
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  
+
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
+    credentials: 'include',
     body: data ? JSON.stringify(data) : undefined,
   });
-  
+
   const json = await res.json().catch(() => ({}));
-  
+
   if (!res.ok) {
     throw new ApiError(
-      json.error ?? `Request failed with status ${res.status}`,
+      (json as { error?: string }).error ?? `Request failed with status ${res.status}`,
       res.status,
       json
     );
   }
-  
+
   return json as T;
 }
 
@@ -97,13 +90,8 @@ export function rawFileUrl(path: string): string {
   return `/api/files/${encodeURIComponent(path)}/raw`;
 }
 
-export function getAuthHeaders(): Record<string, string> {
-  const token = useAuthStore.getState().token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 export async function downloadWorkspaceFile(path: string): Promise<void> {
-  const res = await fetch(rawFileUrl(path), { headers: getAuthHeaders() });
+  const res = await fetch(rawFileUrl(path), { credentials: 'include' });
   if (!res.ok) {
     throw new ApiError(`Request failed with status ${res.status}`, res.status);
   }

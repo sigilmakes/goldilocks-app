@@ -16,6 +16,10 @@ import {
   recordTtft,
   websocketErrored,
 } from './metrics.js';
+import {
+  authenticateInternalHttpRequest,
+  authenticateInternalWebSocketMessage,
+} from './internal-auth.js';
 
 CONFIG.validateRequiredSecrets();
 
@@ -36,11 +40,16 @@ interface InternalWsState {
 
 interface GatewayAuthMessage {
   type: 'auth';
-  userId: string;
   gatewayToken: string;
+  userToken: string;
 }
 
-function send(ws: WebSocket, msg: ServerMessage): void {
+type InternalServerMessage =
+  | ServerMessage
+  | { type: 'auth_ok'; userId: string }
+  | { type: 'auth_fail'; error: string };
+
+function send(ws: WebSocket, msg: InternalServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(msg));
 }
@@ -245,17 +254,14 @@ function normalizeMessages(history: unknown[]): HistoryMessage[] {
 }
 
 function verifyInternalRequest(req: InternalAuthRequest, res: Response, next: express.NextFunction): void {
-  const sharedSecret = req.header('x-goldilocks-shared-secret');
-  const userId = req.header('x-goldilocks-user');
-
-  if (sharedSecret !== CONFIG.agentServiceSharedSecret || !userId) {
+  try {
+    const auth = authenticateInternalHttpRequest(req);
+    req.internalUserId = auth.userId;
+    next();
+  } catch {
     internalAuthFailed();
     res.status(401).json({ error: 'Unauthorized internal request' });
-    return;
   }
-
-  req.internalUserId = userId;
-  next();
 }
 
 const app = express();
@@ -386,13 +392,17 @@ wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
 
     try {
       if (msg.type === 'auth' && 'gatewayToken' in msg) {
-        if (msg.gatewayToken !== CONFIG.agentServiceSharedSecret) {
+        try {
+          const auth = authenticateInternalWebSocketMessage(msg);
+          state.userId = auth.userId;
+          send(ws, { type: 'auth_ok', userId: auth.userId });
+        } catch (err) {
           internalAuthFailed();
-          send(ws, { type: 'auth_fail', error: 'Invalid gateway token' });
-          return;
+          send(ws, {
+            type: 'auth_fail',
+            error: err instanceof Error ? err.message : 'Unauthorized gateway websocket',
+          });
         }
-        state.userId = msg.userId;
-        send(ws, { type: 'auth_ok', userId: msg.userId });
         return;
       }
 
