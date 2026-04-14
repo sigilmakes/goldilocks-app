@@ -80,4 +80,16 @@ describe('CONFIG auth defaults', () => {
     expect(CONFIG.allowedWebSocketOrigins).toContain('https://goldilocks.example');
     expect(CONFIG.allowedWebSocketOrigins).toContain('http://localhost:5173');
   });
+
+  it('exposes configurable file upload limits', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.FILE_UPLOAD_MAX_BYTES = '1234';
+    process.env.JWT_SECRET = 'test-jwt-not-for-prod';
+    process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
+    process.env.AGENT_SERVICE_SHARED_SECRET = 'test-agent-shared-secret';
+
+    const { CONFIG } = await loadConfig();
+    expect(CONFIG.fileUploadMaxBytes).toBe(1234);
+    expect(CONFIG.fileUploadBodyLimit).toBe('1234b');
+  });
 });

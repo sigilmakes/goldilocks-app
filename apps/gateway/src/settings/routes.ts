@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { getDb } from '@goldilocks/data';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
-import { encrypt, decrypt } from '@goldilocks/config';
+import { encrypt } from '@goldilocks/config';
 import { getProviders, getModels } from '@mariozechner/pi-ai';
 
 const router = Router();
@@ -75,6 +75,152 @@ const GROUP_LABELS: Record<string, string> = {
   regional: 'Regional',
 };
 
+const ALLOWED_SETTING_KEYS = new Set(['defaultModel', 'defaultFunctional', 'workspaceViewer']);
+const ALLOWED_WORKSPACE_VIEWER_KEYS = new Set([
+  'monacoExtensions',
+  'imageViewerExtensions',
+  'imageBackground',
+  'imageFitMode',
+  'pdfDefaultZoom',
+  'monacoFontSize',
+  'monacoTabSize',
+  'monacoWordWrap',
+  'monacoLineNumbers',
+  'monacoMinimap',
+]);
+
+function normalizeExtension(value: string): string {
+  return value.trim().toLowerCase().replace(/^\./, '');
+}
+
+function normalizeExtensions(values: unknown): string[] {
+  if (!Array.isArray(values) || values.some((value) => typeof value !== 'string')) {
+    throw new Error('workspaceViewer extension lists must be string arrays');
+  }
+
+  return Array.from(new Set(values.map(normalizeExtension).filter(Boolean)));
+}
+
+function parseSettings(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function validateWorkspaceViewerPatch(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('workspaceViewer must be an object');
+  }
+
+  const patch = value as Record<string, unknown>;
+  const normalized: Record<string, unknown> = {};
+
+  for (const key of Object.keys(patch)) {
+    if (!ALLOWED_WORKSPACE_VIEWER_KEYS.has(key)) {
+      throw new Error(`Unknown workspaceViewer setting: ${key}`);
+    }
+  }
+
+  if ('monacoExtensions' in patch) {
+    normalized.monacoExtensions = normalizeExtensions(patch.monacoExtensions);
+  }
+
+  if ('imageViewerExtensions' in patch) {
+    normalized.imageViewerExtensions = normalizeExtensions(patch.imageViewerExtensions);
+  }
+
+  if ('imageBackground' in patch) {
+    if (!['checkered', 'dark', 'light'].includes(String(patch.imageBackground))) {
+      throw new Error('workspaceViewer.imageBackground must be checkered, dark, or light');
+    }
+    normalized.imageBackground = patch.imageBackground;
+  }
+
+  if ('imageFitMode' in patch) {
+    if (!['contain', 'actual'].includes(String(patch.imageFitMode))) {
+      throw new Error('workspaceViewer.imageFitMode must be contain or actual');
+    }
+    normalized.imageFitMode = patch.imageFitMode;
+  }
+
+  if ('pdfDefaultZoom' in patch) {
+    if (![50, 75, 100, 125, 150, 200].includes(Number(patch.pdfDefaultZoom))) {
+      throw new Error('workspaceViewer.pdfDefaultZoom must be one of 50, 75, 100, 125, 150, or 200');
+    }
+    normalized.pdfDefaultZoom = Number(patch.pdfDefaultZoom);
+  }
+
+  if ('monacoFontSize' in patch) {
+    const value = Number(patch.monacoFontSize);
+    if (!Number.isFinite(value)) {
+      throw new Error('workspaceViewer.monacoFontSize must be a number');
+    }
+    normalized.monacoFontSize = Math.min(24, Math.max(10, Math.round(value)));
+  }
+
+  if ('monacoTabSize' in patch) {
+    if (![2, 4, 8].includes(Number(patch.monacoTabSize))) {
+      throw new Error('workspaceViewer.monacoTabSize must be 2, 4, or 8');
+    }
+    normalized.monacoTabSize = Number(patch.monacoTabSize);
+  }
+
+  for (const booleanKey of ['monacoWordWrap', 'monacoLineNumbers', 'monacoMinimap'] as const) {
+    if (booleanKey in patch) {
+      if (typeof patch[booleanKey] !== 'boolean') {
+        throw new Error(`workspaceViewer.${booleanKey} must be a boolean`);
+      }
+      normalized[booleanKey] = patch[booleanKey];
+    }
+  }
+
+  return normalized;
+}
+
+function validateSettingsPatch(updates: unknown, current: Record<string, unknown>): Record<string, unknown> {
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    throw new Error('Request body must be a JSON object');
+  }
+
+  const patch = updates as Record<string, unknown>;
+  const normalized: Record<string, unknown> = {};
+
+  for (const key of Object.keys(patch)) {
+    if (!ALLOWED_SETTING_KEYS.has(key)) {
+      throw new Error(`Unknown setting: ${key}`);
+    }
+  }
+
+  if ('defaultModel' in patch) {
+    if (patch.defaultModel !== null && typeof patch.defaultModel !== 'string') {
+      throw new Error('defaultModel must be a string or null');
+    }
+    normalized.defaultModel = patch.defaultModel;
+  }
+
+  if ('defaultFunctional' in patch) {
+    if (patch.defaultFunctional !== 'PBE' && patch.defaultFunctional !== 'PBEsol') {
+      throw new Error('defaultFunctional must be PBE or PBEsol');
+    }
+    normalized.defaultFunctional = patch.defaultFunctional;
+  }
+
+  if ('workspaceViewer' in patch) {
+    const currentViewer = current.workspaceViewer && typeof current.workspaceViewer === 'object' && !Array.isArray(current.workspaceViewer)
+      ? current.workspaceViewer as Record<string, unknown>
+      : {};
+    normalized.workspaceViewer = {
+      ...currentViewer,
+      ...validateWorkspaceViewerPatch(patch.workspaceViewer),
+    };
+  }
+
+  return normalized;
+}
+
 // GET /api/settings/providers - Returns all built-in Pi providers with metadata
 router.get('/providers', (_req: AuthRequest, res: Response) => {
   const providers = getProviders()
@@ -109,19 +255,13 @@ router.get('/', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  res.json({ settings: JSON.parse(row.settings) });
+  res.json({ settings: parseSettings(row.settings) });
 });
 
 // PATCH /api/settings - Update user settings (merge with existing)
 router.patch('/', (req: AuthRequest, res: Response) => {
   if (!req.user) {
     res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-
-  const updates = req.body;
-  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
-    res.status(400).json({ error: 'Request body must be a JSON object' });
     return;
   }
 
@@ -135,15 +275,24 @@ router.patch('/', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const current = JSON.parse(row.settings);
-  const merged = { ...current, ...updates };
+  const current = parseSettings(row.settings);
 
-  db.prepare('UPDATE users SET settings = ? WHERE id = ?').run(
-    JSON.stringify(merged),
-    req.user.id,
-  );
+  try {
+    const normalizedPatch = validateSettingsPatch(req.body, current);
+    const merged = {
+      ...current,
+      ...normalizedPatch,
+    };
 
-  res.json({ settings: merged });
+    db.prepare('UPDATE users SET settings = ? WHERE id = ?').run(
+      JSON.stringify(merged),
+      req.user.id,
+    );
+
+    res.json({ settings: merged });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid settings payload' });
+  }
 });
 
 // GET /api/settings/api-keys - List API key metadata (NOT the actual keys)

@@ -6,6 +6,7 @@ config();
 const defaultStateDir = resolve(process.cwd(), '.dev');
 const dataDir = process.env.DATA_DIR ?? (process.env.GOLDILOCKS_STATE_DIR ? resolve(process.env.GOLDILOCKS_STATE_DIR) : defaultStateDir);
 const sessionCookieMaxAgeMs = parseInt(process.env.SESSION_COOKIE_MAX_AGE_MS ?? '28800000', 10);
+const defaultFileUploadMaxBytes = 50 * 1024 * 1024;
 
 function requireEnv(name: 'JWT_SECRET' | 'ENCRYPTION_KEY' | 'AGENT_SERVICE_SHARED_SECRET'): string {
   const value = process.env[name]?.trim();
@@ -38,6 +39,15 @@ export const CONFIG = {
 
   get frontendUrl(): string {
     return process.env.FRONTEND_URL ?? (this.isProd ? `http://localhost:${this.port}` : 'http://localhost:5173');
+  },
+
+  get fileUploadMaxBytes(): number {
+    const parsed = parseInt(process.env.FILE_UPLOAD_MAX_BYTES ?? `${defaultFileUploadMaxBytes}`, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultFileUploadMaxBytes;
+  },
+
+  get fileUploadBodyLimit(): string {
+    return `${this.fileUploadMaxBytes}b`;
   },
 
   get allowedWebSocketOrigins(): string[] {

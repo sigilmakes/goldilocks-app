@@ -200,7 +200,7 @@ describe('Files', () => {
 
     const res = await fetch(`${server.baseUrl}/api/files/upload`, {
       method: 'POST', headers: authHeaders(user),
-      body: JSON.stringify({ filename: 'uploaded.txt', content: b64 }),
+      body: JSON.stringify({ filename: 'uploaded.txt', content: b64, contentType: 'text/plain' }),
     });
 
     expect(res.status).toBe(201);
@@ -216,7 +216,7 @@ describe('Files', () => {
 
     const uploadRes = await fetch(`${server.baseUrl}/api/files/upload`, {
       method: 'POST', headers: authHeaders(user),
-      body: JSON.stringify({ filename, content: Buffer.from(content).toString('base64') }),
+      body: JSON.stringify({ filename, content: Buffer.from(content).toString('base64'), contentType: 'text/plain' }),
     });
     expect(uploadRes.status).toBe(201);
 
@@ -231,7 +231,7 @@ describe('Files', () => {
   it('rejects upload without filename', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/upload`, {
       method: 'POST', headers: authHeaders(user),
-      body: JSON.stringify({ content: Buffer.from('hello').toString('base64') }),
+      body: JSON.stringify({ content: Buffer.from('hello').toString('base64'), contentType: 'text/plain' }),
     });
 
     expect(res.status).toBe(400);
@@ -246,10 +246,60 @@ describe('Files', () => {
     expect(res.status).toBe(400);
   });
 
+  it('rejects upload without contentType', async () => {
+    const res = await fetch(`${server.baseUrl}/api/files/upload`, {
+      method: 'POST', headers: authHeaders(user),
+      body: JSON.stringify({ filename: 'no-type.txt', content: Buffer.from('hello').toString('base64') }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects upload with a disallowed content type', async () => {
+    const res = await fetch(`${server.baseUrl}/api/files/upload`, {
+      method: 'POST', headers: authHeaders(user),
+      body: JSON.stringify({
+        filename: 'malware.exe',
+        content: Buffer.from('definitely-not-safe').toString('base64'),
+        contentType: 'application/x-msdownload',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const json = await res.json() as { error: string };
+    expect(json.error).toMatch(/unsupported content type/i);
+  });
+
+  it('rejects oversized file payloads with 413', async () => {
+    const tinyLimitServer = await createTestServer({ env: { FILE_UPLOAD_MAX_BYTES: '64' } });
+    const limitedUser = await tinyLimitServer.registerUser();
+
+    try {
+      const res = await fetch(`${tinyLimitServer.baseUrl}/api/files/upload`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          authorization: tinyLimitServer.authHeader(limitedUser),
+        },
+        body: JSON.stringify({
+          filename: 'too-large.txt',
+          content: Buffer.from('x'.repeat(256)).toString('base64'),
+          contentType: 'text/plain',
+        }),
+      });
+
+      expect(res.status).toBe(413);
+      const json = await res.json() as { error: string };
+      expect(json.error).toMatch(/exceeds limit/i);
+    } finally {
+      await tinyLimitServer.stop();
+    }
+  });
+
   it('rejects hidden filenames', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/upload`, {
       method: 'POST', headers: authHeaders(user),
-      body: JSON.stringify({ filename: '.env', content: Buffer.from('SECRET=123').toString('base64') }),
+      body: JSON.stringify({ filename: '.env', content: Buffer.from('SECRET=123').toString('base64'), contentType: 'text/plain' }),
     });
 
     expect(res.status).toBe(400);
@@ -383,7 +433,7 @@ describe('Files', () => {
     // Upload via the upload route (base64, preserves raw bytes)
     await fetch(`${server.baseUrl}/api/files/upload`, {
       method: 'POST', headers: authHeaders(user),
-      body: JSON.stringify({ filename: path, content: originalBytes.toString('base64') }),
+      body: JSON.stringify({ filename: path, content: originalBytes.toString('base64'), contentType: 'application/octet-stream' }),
     });
 
     const res = await fetch(`${server.baseUrl}/api/files/${path}/raw`, {

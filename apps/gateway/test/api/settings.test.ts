@@ -85,6 +85,36 @@ describe('Settings', () => {
     expect(json.settings.workspaceViewer.monacoExtensions).toContain('ts');
   });
 
+  it('rejects unknown settings keys', async () => {
+    const res = await fetch(`${server.baseUrl}/api/settings`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        authorization: server.authHeader(user),
+      },
+      body: JSON.stringify({ isAdmin: true }),
+    });
+
+    expect(res.status).toBe(400);
+    const json = await res.json() as { error: string };
+    expect(json.error).toContain('Unknown setting: isAdmin');
+  });
+
+  it('rejects invalid workspaceViewer payloads', async () => {
+    const res = await fetch(`${server.baseUrl}/api/settings`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        authorization: server.authHeader(user),
+      },
+      body: JSON.stringify({ workspaceViewer: { monacoTabSize: 3 } }),
+    });
+
+    expect(res.status).toBe(400);
+    const json = await res.json() as { error: string };
+    expect(json.error).toMatch(/monacoTabSize/i);
+  });
+
   it('rejects unauthenticated PATCH', async () => {
     const res = await fetch(`${server.baseUrl}/api/settings`, {
       method: 'PATCH',

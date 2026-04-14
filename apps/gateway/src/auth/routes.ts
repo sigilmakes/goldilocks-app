@@ -33,6 +33,17 @@ interface UserRow {
   created_at?: number;
 }
 
+interface FailedAuthAttemptRow {
+  email: string;
+  attempts: number;
+  locked_until: number | null;
+  last_attempt: number;
+}
+
+const AUTH_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_FAILURE_THRESHOLD = 5;
+const BASE_LOCKOUT_MS = 15 * 60 * 1000;
+
 function formatUser(row: Pick<UserRow, 'id' | 'email' | 'display_name' | 'settings'> & { created_at?: number }) {
   return {
     id: row.id,
@@ -41,6 +52,73 @@ function formatUser(row: Pick<UserRow, 'id' | 'email' | 'display_name' | 'settin
     settings: JSON.parse(row.settings),
     createdAt: row.created_at,
   };
+}
+
+function getFailedAuthAttempt(email: string): FailedAuthAttemptRow | undefined {
+  return getDb().prepare(`
+    SELECT email, attempts, locked_until, last_attempt
+    FROM failed_auth_attempts
+    WHERE email = ?
+  `).get(email) as FailedAuthAttemptRow | undefined;
+}
+
+function clearFailedAuthAttempts(email: string): void {
+  getDb().prepare('DELETE FROM failed_auth_attempts WHERE email = ?').run(email);
+}
+
+function getLockoutDurationMs(attempts: number): number {
+  const cycle = Math.max(1, Math.floor(attempts / AUTH_FAILURE_THRESHOLD));
+  return BASE_LOCKOUT_MS * (2 ** (cycle - 1));
+}
+
+function getLockoutMessage(lockedUntil: number): string {
+  const remainingMinutes = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 60_000));
+  return `Account temporarily locked. Try again in ${remainingMinutes} minute${remainingMinutes === 1 ? '' : 's'}.`;
+}
+
+function recordFailedLogin(email: string): { lockedUntil: number | null } {
+  const db = getDb();
+  const now = Date.now();
+  const existing = getFailedAuthAttempt(email);
+
+  const shouldContinueFailureCycle = Boolean(
+    existing && (
+      existing.attempts >= AUTH_FAILURE_THRESHOLD
+      || now - existing.last_attempt <= AUTH_FAILURE_WINDOW_MS
+    )
+  );
+
+  const attempts = shouldContinueFailureCycle
+    ? (existing?.attempts ?? 0) + 1
+    : 1;
+
+  const lockedUntil = attempts % AUTH_FAILURE_THRESHOLD === 0
+    ? now + getLockoutDurationMs(attempts)
+    : null;
+
+  db.prepare(`
+    INSERT INTO failed_auth_attempts (email, attempts, locked_until, last_attempt)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET
+      attempts = excluded.attempts,
+      locked_until = excluded.locked_until,
+      last_attempt = excluded.last_attempt
+  `).run(email, attempts, lockedUntil, now);
+
+  return { lockedUntil };
+}
+
+function getActiveLockout(email: string): FailedAuthAttemptRow | null {
+  const attempt = getFailedAuthAttempt(email);
+  if (!attempt?.locked_until) {
+    return null;
+  }
+
+  if (attempt.locked_until <= Date.now()) {
+    return null;
+  }
+
+  return attempt;
 }
 
 // POST /api/auth/register
@@ -100,6 +178,12 @@ router.post('/login', async (req: Request<{}, {}, LoginBody>, res: Response) => 
     return;
   }
 
+  const activeLockout = getActiveLockout(email);
+  if (activeLockout?.locked_until) {
+    res.status(429).json({ error: getLockoutMessage(activeLockout.locked_until) });
+    return;
+  }
+
   const db = getDb();
   const row = db.prepare(`
     SELECT id, email, password_hash, display_name, settings
@@ -107,15 +191,29 @@ router.post('/login', async (req: Request<{}, {}, LoginBody>, res: Response) => 
   `).get(email) as UserRow | undefined;
 
   if (!row) {
+    const failure = recordFailedLogin(email);
+    if (failure.lockedUntil) {
+      res.status(429).json({ error: getLockoutMessage(failure.lockedUntil) });
+      return;
+    }
+
     res.status(401).json({ error: 'Invalid email or password' });
     return;
   }
 
   const valid = await verifyPassword(password, row.password_hash);
   if (!valid) {
+    const failure = recordFailedLogin(email);
+    if (failure.lockedUntil) {
+      res.status(429).json({ error: getLockoutMessage(failure.lockedUntil) });
+      return;
+    }
+
     res.status(401).json({ error: 'Invalid email or password' });
     return;
   }
+
+  clearFailedAuthAttempts(email);
 
   const token = generateToken({ id: row.id, email: row.email });
   setSessionCookie(res, token);
