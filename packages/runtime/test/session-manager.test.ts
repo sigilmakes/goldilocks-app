@@ -14,7 +14,7 @@ const createdSessions: Array<{
 vi.mock('@mariozechner/pi-coding-agent', () => {
   return {
     AuthStorage: {
-      inMemory: () => ({ setRuntimeApiKey: vi.fn(), removeRuntimeApiKey: vi.fn() }),
+      inMemory: () => ({ setRuntimeApiKey: vi.fn(), removeRuntimeApiKey: vi.fn(), list: () => [] }),
     },
     ModelRegistry: {
       inMemory: () => ({ getAvailable: vi.fn(async () => []) }),

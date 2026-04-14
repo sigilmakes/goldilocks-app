@@ -13,9 +13,23 @@ export interface ApiKeyInfo {
   createdAt?: number;
 }
 
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  group: string;
+  modelCount: number;
+}
+
+export interface ProviderGroup {
+  key: string;
+  label: string;
+}
+
 interface SettingsState {
   theme: 'dark' | 'light';
   apiKeys: ApiKeyInfo[];
+  providers: ProviderInfo[];
+  providerGroups: Record<string, string>;
   defaultModel: string | null;
   defaultFunctional: 'PBEsol' | 'PBE';
   workspaceViewer: WorkspaceViewerSettings;
@@ -28,6 +42,7 @@ interface SettingsState {
   addApiKey(provider: string, key: string): Promise<void>;
   removeApiKey(provider: string): Promise<void>;
   fetchApiKeys(): Promise<void>;
+  fetchProviders(): Promise<void>;
 }
 
 export interface ServerSettings {
@@ -41,6 +56,11 @@ interface SettingsResponse {
 
 interface ApiKeysResponse {
   apiKeys: ApiKeyInfo[];
+}
+
+interface ProvidersResponse {
+  providers: ProviderInfo[];
+  groups: Record<string, string>;
 }
 
 function applyTheme(theme: 'dark' | 'light') {
@@ -58,6 +78,8 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       theme: 'dark',
       apiKeys: [],
+      providers: [],
+      providerGroups: {},
       defaultModel: null,
       defaultFunctional: 'PBEsol',
       workspaceViewer: DEFAULT_WORKSPACE_VIEWER_SETTINGS,
@@ -147,6 +169,17 @@ export const useSettingsStore = create<SettingsState>()(
           set({ apiKeys: res.apiKeys, isLoading: false });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Failed to fetch API keys';
+          set({ error: message, isLoading: false });
+        }
+      },
+
+      fetchProviders: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          const res = await api.get<ProvidersResponse>('/settings/providers');
+          set({ providers: res.providers, providerGroups: res.groups, isLoading: false });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Failed to fetch providers';
           set({ error: message, isLoading: false });
         }
       },

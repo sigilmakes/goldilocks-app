@@ -96,16 +96,15 @@ describe('Settings', () => {
 
   // ── GET /settings/api-keys ────────────────────────────────────────────────
 
-  it('returns API key list with all supported providers', async () => {
+  it('returns empty API key list for new user', async () => {
     const res = await fetch(`${server.baseUrl}/api/settings/api-keys`, {
       headers: { authorization: server.authHeader(user) },
     });
 
     expect(res.status).toBe(200);
     const json = await res.json() as { apiKeys: { provider: string; hasKey: boolean; createdAt: number | null }[] };
-    // All supported providers appear, none have keys yet
-    expect(json.apiKeys.length).toBeGreaterThanOrEqual(3);
-    expect(json.apiKeys.every(k => k.hasKey === false)).toBe(true);
+    // No keys stored yet — list should be empty
+    expect(json.apiKeys.length).toBe(0);
   });
 
   it('rejects unauthenticated api-keys request', async () => {
@@ -130,7 +129,7 @@ describe('Settings', () => {
     expect(json.ok).toBe(true);
     expect(json.provider).toBe('anthropic');
 
-    // Verify the secret is not exposed in the list — only hasKey + createdAt
+    // Verify the secret is not exposed — only provider + hasKey + createdAt
     const list = await fetch(`${server.baseUrl}/api/settings/api-keys`, {
       headers: { authorization: server.authHeader(user) },
     });
@@ -138,7 +137,7 @@ describe('Settings', () => {
     const anthropic = apiKeys.find((k) => k.provider === 'anthropic');
     expect(anthropic?.hasKey).toBe(true);
     expect(anthropic?.createdAt).toBeTypeOf('number');
-    // The actual key string never appears in the list
+    // The actual key string never appears in the response
     const raw = JSON.stringify(apiKeys);
     expect(raw).not.toContain('sk-test-secret-key-12345');
   });
@@ -206,6 +205,47 @@ describe('Settings', () => {
       headers: { authorization: server.authHeader(user) },
     });
     expect(res.status).toBe(400);
+  });
+
+  // ── GET /settings/providers ──────────────────────────────────────────────
+
+  it('returns the full provider list with metadata', async () => {
+    const res = await fetch(`${server.baseUrl}/api/settings/providers`, {
+      headers: { authorization: server.authHeader(user) },
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json() as { providers: { id: string; name: string; group: string; modelCount: number }[]; groups: Record<string, string> };
+    expect(json.providers.length).toBeGreaterThanOrEqual(20);
+    // Sorted by model count descending
+    for (let i = 1; i < json.providers.length; i++) {
+      expect(json.providers[i - 1].modelCount).toBeGreaterThanOrEqual(json.providers[i].modelCount);
+    }
+    // Has expected fields
+    expect(json.providers[0].id).toBeTruthy();
+    expect(json.providers[0].name).toBeTruthy();
+    expect(json.providers[0].group).toBeTruthy();
+    expect(json.providers[0].modelCount).toBeGreaterThan(0);
+    // Has group labels
+    expect(Object.keys(json.groups).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('rejects unauthenticated providers request', async () => {
+    const res = await fetch(`${server.baseUrl}/api/settings/providers`);
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts keys for any built-in provider', async () => {
+    // mistral is a valid built-in provider, not one of the original 3
+    const res = await fetch(`${server.baseUrl}/api/settings/api-key`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        authorization: server.authHeader(user),
+      },
+      body: JSON.stringify({ provider: 'mistral', key: 'mistral-test-key' }),
+    });
+    expect(res.status).toBe(200);
   });
 
   it('rejects unauthenticated DELETE', async () => {

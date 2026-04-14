@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -19,7 +19,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
-import { useSettingsStore, type ApiKeyInfo } from '../store/settings';
+import { useSettingsStore, type ApiKeyInfo, type ProviderInfo } from '../store/settings';
 import { useModelsStore } from '../store/models';
 import { useToastStore } from '../store/toast';
 import { formatExtensionList, parseExtensionList } from '../lib/fileAssociations';
@@ -33,12 +33,6 @@ const sections: { id: Section; label: string; icon: typeof User }[] = [
   { id: 'workspace', label: 'Workspace', icon: FileCode2 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'about', label: 'About', icon: Info },
-];
-
-const PROVIDERS = [
-  { id: 'anthropic', name: 'Anthropic', description: 'Claude models' },
-  { id: 'openai', name: 'OpenAI', description: 'GPT models' },
-  { id: 'google', name: 'Google', description: 'Gemini models' },
 ];
 
 export default function Settings() {
@@ -151,13 +145,16 @@ function ProfileSection() {
 }
 
 function ApiKeysSection() {
-  const { apiKeys, fetchApiKeys, addApiKey, removeApiKey, isLoading } = useSettingsStore();
+  const { apiKeys, providers, providerGroups, fetchApiKeys, fetchProviders, addApiKey, removeApiKey, isLoading } = useSettingsStore();
   const addToast = useToastStore((s) => s.addToast);
-  const [modalProvider, setModalProvider] = useState<string | null>(null);
+  const [modalProvider, setModalProvider] = useState<{ id: string; name: string } | null>(null);
+  const [search, setSearch] = useState('');
+  const [filterGroup, setFilterGroup] = useState<string>('all');
 
   useEffect(() => {
     fetchApiKeys();
-  }, [fetchApiKeys]);
+    fetchProviders();
+  }, [fetchApiKeys, fetchProviders]);
 
   const getKeyInfo = (providerId: string): ApiKeyInfo | undefined => {
     return apiKeys.find((k) => k.provider === providerId);
@@ -173,6 +170,39 @@ function ApiKeysSection() {
     }
   };
 
+  // Group and filter providers
+  const filteredProviders = useMemo(() => {
+    let list = providers;
+    if (filterGroup !== 'all') {
+      list = list.filter((p) => p.group === filterGroup);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter((p) => p.id.includes(q) || p.name.toLowerCase().includes(q));
+    }
+    return list;
+  }, [providers, filterGroup, search]);
+
+  // Group the filtered providers by their group key
+  const groupedProviders = useMemo(() => {
+    const groups = new Map<string, ProviderInfo[]>();
+    for (const p of filteredProviders) {
+      const group = p.group ?? 'specialist';
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group)!.push(p);
+    }
+    return groups;
+  }, [filteredProviders]);
+
+  // Sort groups: configured first, then popular, aggregators, cloud, specialist, subscription, regional
+  const groupOrder = ['popular', 'aggregators', 'cloud', 'specialist', 'subscription', 'regional'];
+  const sortedGroupKeys = useMemo(() => {
+    const keys = Array.from(groupedProviders.keys());
+    return keys.sort((a, b) => groupOrder.indexOf(a) - groupOrder.indexOf(b));
+  }, [groupedProviders]);
+
+  const keysConfigured = new Set(apiKeys.filter((k) => k.hasKey).map((k) => k.provider));
+
   return (
     <>
       <SectionCard title="API Keys">
@@ -180,54 +210,96 @@ function ApiKeysSection() {
           <p className="text-sm text-slate-400 mb-4">
             Configure API keys for LLM providers. Your keys are encrypted and stored securely.
           </p>
-          {PROVIDERS.map((provider) => {
-            const keyInfo = getKeyInfo(provider.id);
-            return (
-              <div
-                key={provider.id}
-                className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-slate-600 rounded-lg flex items-center justify-center">
-                    <Key className="w-5 h-5 text-slate-300" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-white">{provider.name}</div>
-                    <div className="text-xs text-slate-400">{provider.description}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <KeyStatusBadge keyInfo={keyInfo} />
-                  <button
-                    onClick={() => setModalProvider(provider.id)}
-                    className="px-3 py-1.5 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
-                  >
-                    {keyInfo?.hasKey ? 'Replace' : 'Add Key'}
-                  </button>
-                  {keyInfo?.hasKey && (
-                    <button
-                      onClick={() => handleRemoveKey(provider.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-600 rounded-lg transition-colors"
-                      title="Remove key"
+
+          {/* Search and filter */}
+          <div className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search providers..."
+              className="flex-1 px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+            <select
+              value={filterGroup}
+              onChange={(e) => setFilterGroup(e.target.value)}
+              className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="all">All groups</option>
+              {groupOrder.map((g) => (
+                <option key={g} value={g}>{providerGroups[g] ?? g}</option>
+              ))}
+            </select>
+          </div>
+
+          {sortedGroupKeys.map((groupKey) => (
+            <div key={groupKey}>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mt-4 mb-2">
+                {providerGroups[groupKey] ?? groupKey}
+              </h3>
+              <div className="space-y-2">
+                {groupedProviders.get(groupKey)!.map((provider) => {
+                  const keyInfo = getKeyInfo(provider.id);
+                  const configured = keysConfigured.has(provider.id);
+                  return (
+                    <div
+                      key={provider.id}
+                      className={`flex items-center justify-between p-3 rounded-lg transition-colors ${
+                        configured ? 'bg-green-900/20 border border-green-800/30' : 'bg-slate-700/50 border border-transparent'
+                      }`}
                     >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                          configured ? 'bg-green-800/40' : 'bg-slate-600'
+                        }`}>
+                          <Key className={`w-5 h-5 ${configured ? 'text-green-400' : 'text-slate-300'}`} />
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-white">{provider.name}</div>
+                          <div className="text-xs text-slate-400">
+                            {provider.modelCount} model{provider.modelCount !== 1 ? 's' : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <KeyStatusBadge keyInfo={keyInfo} />
+                        <button
+                          onClick={() => setModalProvider({ id: provider.id, name: provider.name })}
+                          className="px-3 py-1.5 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
+                        >
+                          {configured ? 'Replace' : 'Add Key'}
+                        </button>
+                        {configured && (
+                          <button
+                            onClick={() => handleRemoveKey(provider.id)}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-600 rounded-lg transition-colors"
+                            title="Remove key"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
+
+          {providers.length === 0 && !isLoading && (
+            <p className="text-sm text-slate-500">No providers available.</p>
+          )}
         </div>
       </SectionCard>
 
       {modalProvider && (
         <ApiKeyModal
-          provider={modalProvider}
-          providerName={PROVIDERS.find((p) => p.id === modalProvider)?.name ?? modalProvider}
+          provider={modalProvider.id}
+          providerName={modalProvider.name}
           onClose={() => setModalProvider(null)}
           onSubmit={async (key) => {
             try {
-              await addApiKey(modalProvider, key);
+              await addApiKey(modalProvider.id, key);
               addToast('API key added successfully', 'success');
               setModalProvider(null);
             } catch {
@@ -700,7 +772,7 @@ function AboutSection() {
         </div>
         <div className="pt-2 border-t border-slate-700">
           <p className="text-xs text-slate-500">
-            Built with React, Zustand, and Tailwind CSS. Powered by Claude, GPT, and Gemini.
+            Built with React, Zustand, and Tailwind CSS. Powered by any LLM you bring a key for.
           </p>
         </div>
       </div>

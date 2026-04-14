@@ -2,14 +2,95 @@ import { Router, Response } from 'express';
 import { getDb } from '@goldilocks/data';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
 import { encrypt, decrypt } from '@goldilocks/config';
+import { getProviders, getModels } from '@mariozechner/pi-ai';
 
 const router = Router();
 
 // All routes require authentication
 router.use(verifyToken);
 
-const SUPPORTED_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
-type Provider = (typeof SUPPORTED_PROVIDERS)[number];
+// Derive the full built-in provider list from Pi SDK at startup
+const BUILTIN_PROVIDERS: Set<string> = new Set(getProviders());
+
+// Human-readable display names for providers
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  'openai': 'OpenAI',
+  'anthropic': 'Anthropic',
+  'google': 'Google',
+  'mistral': 'Mistral',
+  'xai': 'xAI',
+  'openrouter': 'OpenRouter',
+  'vercel-ai-gateway': 'Vercel AI Gateway',
+  'amazon-bedrock': 'Amazon Bedrock',
+  'azure-openai-responses': 'Azure OpenAI',
+  'google-vertex': 'Google Vertex AI',
+  'google-antigravity': 'Google Antigravity',
+  'google-gemini-cli': 'Google Gemini CLI',
+  'groq': 'Groq',
+  'cerebras': 'Cerebras',
+  'huggingface': 'Hugging Face',
+  'github-copilot': 'GitHub Copilot',
+  'openai-codex': 'OpenAI Codex',
+  'opencode': 'OpenCode',
+  'opencode-go': 'OpenCode Go',
+  'kimi-coding': 'Kimi Coding',
+  'minimax': 'MiniMax',
+  'minimax-cn': 'MiniMax (China)',
+  'zai': 'ZAI',
+};
+
+// Provider grouping for UI organization
+const PROVIDER_GROUPS: Record<string, string> = {
+  'openai': 'popular',
+  'anthropic': 'popular',
+  'google': 'popular',
+  'mistral': 'popular',
+  'xai': 'popular',
+  'openrouter': 'aggregators',
+  'vercel-ai-gateway': 'aggregators',
+  'opencode': 'aggregators',
+  'opencode-go': 'aggregators',
+  'amazon-bedrock': 'cloud',
+  'azure-openai-responses': 'cloud',
+  'google-vertex': 'cloud',
+  'groq': 'specialist',
+  'cerebras': 'specialist',
+  'huggingface': 'specialist',
+  'kimi-coding': 'specialist',
+  'zai': 'specialist',
+  'minimax': 'specialist',
+  'github-copilot': 'subscription',
+  'openai-codex': 'subscription',
+  'google-antigravity': 'subscription',
+  'google-gemini-cli': 'subscription',
+  'minimax-cn': 'regional',
+};
+
+const GROUP_LABELS: Record<string, string> = {
+  popular: 'Popular',
+  aggregators: 'Aggregators',
+  cloud: 'Cloud Platforms',
+  specialist: 'Specialist',
+  subscription: 'Subscription',
+  regional: 'Regional',
+};
+
+// GET /api/settings/providers - Returns all built-in Pi providers with metadata
+router.get('/providers', (_req: AuthRequest, res: Response) => {
+  const providers = getProviders()
+    .map((id) => ({
+      id,
+      name: PROVIDER_DISPLAY_NAMES[id] ?? id,
+      group: PROVIDER_GROUPS[id] ?? 'specialist',
+      modelCount: getModels(id).length,
+    }))
+    .sort((a, b) => b.modelCount - a.modelCount);
+
+  res.json({
+    providers,
+    groups: GROUP_LABELS,
+  });
+});
 
 // GET /api/settings - Returns user settings (from users.settings JSON column)
 router.get('/', (req: AuthRequest, res: Response) => {
@@ -79,10 +160,11 @@ router.get('/api-keys', (req: AuthRequest, res: Response) => {
 
   const userKeyMap = new Map(userKeys.map((k) => [k.provider, k.created_at]));
 
-  const apiKeys = SUPPORTED_PROVIDERS.map((provider) => ({
+  // Return key status for every provider the user has a key for
+  const apiKeys = Array.from(userKeyMap.entries()).map(([provider, created_at]) => ({
     provider,
-    hasKey: userKeyMap.has(provider),
-    createdAt: userKeyMap.get(provider) ?? null,
+    hasKey: true,
+    createdAt: created_at,
   }));
 
   res.json({ apiKeys });
@@ -102,9 +184,9 @@ router.put('/api-key', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  if (!SUPPORTED_PROVIDERS.includes(provider as Provider)) {
+  if (!BUILTIN_PROVIDERS.has(provider)) {
     res.status(400).json({
-      error: `Invalid provider. Supported: ${SUPPORTED_PROVIDERS.join(', ')}`,
+      error: `Unknown provider: ${provider}`,
     });
     return;
   }
@@ -131,9 +213,9 @@ router.delete('/api-key/:provider', (req: AuthRequest, res: Response) => {
 
   const provider = req.params.provider as string;
 
-  if (!SUPPORTED_PROVIDERS.includes(provider as Provider)) {
+  if (!BUILTIN_PROVIDERS.has(provider)) {
     res.status(400).json({
-      error: `Invalid provider. Supported: ${SUPPORTED_PROVIDERS.join(', ')}`,
+      error: `Unknown provider: ${provider}`,
     });
     return;
   }

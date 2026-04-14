@@ -336,7 +336,8 @@ class SessionManager {
       }
     }
 
-    for (const provider of ['anthropic', 'openai', 'google']) {
+    // Remove runtime keys for any provider the user no longer has stored
+    for (const provider of authStorage.list()) {
       if (!providers.has(provider)) {
         authStorage.removeRuntimeApiKey(provider);
       }
