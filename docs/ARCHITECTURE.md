@@ -22,7 +22,7 @@ graph TD
 
 1. **One architecture.** k8s for dev (kind + Tilt) and prod. No local-mode alternative.
 2. **Pi owns the agent.** Sessions, conversations, models — managed by Pi's SDK inside the agent-service. The gateway doesn't reimplement any agent logic.
-3. **Brain outside the sandbox.** The agent (reasoning, auth, session state) lives in the agent-service. The pod runs only tool commands: bash, read, write, edit, find, grep, ls.
+3. **Brain outside the sandbox.** The agent (reasoning, auth, session state) lives in the agent-service. The pod runs only the controlled tool surface: bash, read, write, and edit.
 4. **Credentials stay outside the pod.** Provider API keys are never injected into sandbox environment variables. They live only in `AuthStorage` inside the agent-service.
 5. **Pod per user, not per session.** One long-lived pod per user. Pi switches sessions via the SDK, not by restarting the process.
 6. **Sessions survive harness restarts.** Session files are stored durably outside the pod. If the agent-service restarts, it reopens sessions from disk.
@@ -83,13 +83,14 @@ Key file: `apps/agent-service/src/index.ts`
 
 ### Pod Tool Operations
 
-Rather than the Pi SDK running tools locally, Goldilocks provides pluggable operations backends that execute inside the user's pod via k8s exec:
+Rather than the Pi SDK running tools locally, Goldilocks provides pluggable operations backends that execute inside the user's pod via k8s exec. Pi still owns the tool semantics; Goldilocks only swaps the transport layer:
 
 - `BashOperations.exec()` → `k8s exec` with shell command
-- `ReadOperations.readFile()` → `k8s exec cat`
-- `WriteOperations.writeFile()` → `k8s exec` with base64 pipe
-- `EditOperations.readFile/writeFile()` → same as read/write
-- `FindOperations`, `GrepOperations`, `LsOperations` → shell commands in the pod
+- `ReadOperations.readFile()` → `k8s exec` running a dedicated Python helper script in the pod
+- `WriteOperations.writeFile()` / `mkdir()` → `k8s exec` running dedicated Python helper scripts in the pod
+- `EditOperations.readFile()/writeFile()` → same remote read/write transport as the standalone tools
+
+Only `read`, `write`, `edit`, and `bash` are exposed to the agent. `find`, `grep`, and `ls` are intentionally not part of the Goldilocks tool surface; the agent can use `bash` when it needs shell-level search/list behavior.
 
 **Key file:** `packages/runtime/src/pod-tool-operations.ts`
 

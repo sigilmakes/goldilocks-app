@@ -9,7 +9,47 @@ const createdSessions: Array<{
   subscribe: ReturnType<typeof vi.fn>;
   emit: (event: unknown) => void;
   listeners: Set<(event: unknown) => void>;
+  _baseToolsOverride?: Record<string, unknown>;
+  _buildRuntime: ReturnType<typeof vi.fn>;
 }> = [];
+
+const createAgentSessionMock = vi.fn(async ({ sessionManager }: { sessionManager: { sessionFile: string } }) => {
+  const listeners = new Set<(event: unknown) => void>();
+  const session = {
+    id: sessionManager.sessionFile,
+    sessionFile: sessionManager.sessionFile,
+    prompt: vi.fn(async () => {}),
+    abort: vi.fn(async () => {}),
+    setModel: vi.fn(async () => {}),
+    dispose: vi.fn(),
+    subscribe: vi.fn((listener: (event: unknown) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }),
+    emit: (event: unknown) => {
+      for (const listener of listeners) listener(event);
+    },
+    listeners,
+    messages: [],
+    thinkingLevel: 'medium',
+    model: null,
+    _buildRuntime: vi.fn(),
+    _baseToolsOverride: undefined as Record<string, unknown> | undefined,
+  };
+  createdSessions.push(session);
+  return { session };
+});
+
+const createReadToolMock = vi.fn(() => ({ name: 'read' }));
+const createBashToolMock = vi.fn(() => ({ name: 'bash' }));
+const createEditToolMock = vi.fn(() => ({ name: 'edit' }));
+const createWriteToolMock = vi.fn(() => ({ name: 'write' }));
+const createPodToolOperationsMock = vi.fn(() => ({
+  read: { transport: 'read' },
+  bash: { transport: 'bash' },
+  edit: { transport: 'edit' },
+  write: { transport: 'write' },
+}));
 
 vi.mock('@mariozechner/pi-coding-agent', () => {
   return {
@@ -24,45 +64,11 @@ vi.mock('@mariozechner/pi-coding-agent', () => {
       open: (sessionPath: string) => ({ sessionFile: sessionPath }),
     },
     getAgentDir: () => '/tmp/.pi/agent',
-    createAgentSession: vi.fn(async ({ sessionManager }: { sessionManager: { sessionFile: string } }) => {
-      const listeners = new Set<(event: unknown) => void>();
-      const session = {
-        id: sessionManager.sessionFile,
-        prompt: vi.fn(async () => {}),
-        abort: vi.fn(async () => {}),
-        setModel: vi.fn(async () => {}),
-        dispose: vi.fn(),
-        subscribe: vi.fn((listener: (event: unknown) => void) => {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        }),
-        emit: (event: unknown) => {
-          for (const listener of listeners) listener(event);
-        },
-        listeners,
-      };
-      createdSessions.push(session);
-      return {
-        session: {
-          sessionFile: sessionManager.sessionFile,
-          prompt: session.prompt,
-          abort: session.abort,
-          setModel: session.setModel,
-          subscribe: session.subscribe,
-          dispose: session.dispose,
-          messages: [],
-          thinkingLevel: 'medium',
-          model: null,
-        },
-      };
-    }),
-    createReadTool: vi.fn(() => ({})),
-    createBashTool: vi.fn(() => ({})),
-    createEditTool: vi.fn(() => ({})),
-    createWriteTool: vi.fn(() => ({})),
-    createGrepTool: vi.fn(() => ({})),
-    createFindTool: vi.fn(() => ({})),
-    createLsTool: vi.fn(() => ({})),
+    createAgentSession: createAgentSessionMock,
+    createReadTool: createReadToolMock,
+    createBashTool: createBashToolMock,
+    createEditTool: createEditToolMock,
+    createWriteTool: createWriteToolMock,
   };
 });
 
@@ -87,24 +93,23 @@ vi.mock('../src/pod-manager.js', () => ({
   },
 }));
 vi.mock('../src/pod-tool-operations.js', () => ({
-  createPodToolOperations: () => ({
-    read: {},
-    bash: {},
-    edit: {},
-    write: {},
-    grep: {},
-    find: {},
-    ls: {},
-  }),
+  createPodToolOperations: createPodToolOperationsMock,
   deleteSessionFile: vi.fn(async () => {}),
   ensureSessionDir: vi.fn(async () => {}),
   getRemoteWorkspaceCwd: () => '/home/node',
   isSessionPathInside: () => true,
 }));
 
-describe('sessionManager conversation isolation', () => {
+describe('sessionManager', () => {
   beforeEach(() => {
     createdSessions.length = 0;
+    createAgentSessionMock.mockClear();
+    createReadToolMock.mockClear();
+    createBashToolMock.mockClear();
+    createEditToolMock.mockClear();
+    createWriteToolMock.mockClear();
+    createPodToolOperationsMock.mockClear();
+    vi.resetModules();
   });
 
   it('keeps separate session instances per conversation', async () => {
@@ -131,5 +136,44 @@ describe('sessionManager conversation isolation', () => {
 
     expect(eventsA).toEqual([{ type: 'message_end', source: 'a' }]);
     expect(eventsB).toEqual([{ type: 'message_end', source: 'b' }]);
+
+    await sessionManager.shutdown();
+  });
+
+  it('limits the runtime tool surface to read, bash, edit, and write', async () => {
+    const { sessionManager } = await import('../src/session-manager');
+
+    await sessionManager.switchSession('user-1', 'conv-a', null);
+
+    expect(createPodToolOperationsMock).toHaveBeenCalledWith({
+      podManager: expect.any(Object),
+      userId: 'user-1',
+    });
+    expect(createReadToolMock).toHaveBeenCalledWith('/home/node', { operations: { transport: 'read' } });
+    expect(createBashToolMock).toHaveBeenCalledWith('/home/node', { operations: { transport: 'bash' } });
+    expect(createEditToolMock).toHaveBeenCalledWith('/home/node', { operations: { transport: 'edit' } });
+    expect(createWriteToolMock).toHaveBeenCalledWith('/home/node', { operations: { transport: 'write' } });
+
+    expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
+    expect(createAgentSessionMock.mock.calls[0]?.[0]?.tools).toEqual([
+      { name: 'read' },
+      { name: 'bash' },
+      { name: 'edit' },
+      { name: 'write' },
+    ]);
+
+    expect(createdSessions).toHaveLength(1);
+    expect(createdSessions[0]._buildRuntime).toHaveBeenCalledWith({
+      activeToolNames: ['read', 'bash', 'edit', 'write'],
+      includeAllExtensionTools: true,
+    });
+    expect(createdSessions[0]._baseToolsOverride).toEqual({
+      read: { name: 'read' },
+      bash: { name: 'bash' },
+      edit: { name: 'edit' },
+      write: { name: 'write' },
+    });
+
+    await sessionManager.shutdown();
   });
 });

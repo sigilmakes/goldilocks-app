@@ -250,6 +250,7 @@ class SessionManager {
       edit: createEditTool(getRemoteWorkspaceCwd(), { operations: operations.edit }),
       write: createWriteTool(getRemoteWorkspaceCwd(), { operations: operations.write }),
     };
+    const activeToolNames = ['read', 'bash', 'edit', 'write'] as const;
 
     const { session } = await createAgentSession({
       cwd: getRemoteWorkspaceCwd(),
@@ -257,7 +258,7 @@ class SessionManager {
       authStorage,
       modelRegistry,
       sessionManager,
-      tools: Object.values(baseTools),
+      tools: activeToolNames.map((name) => baseTools[name]),
     });
 
     // pi SDK 0.64.0 only uses options.tools to pick active tool names; it still
@@ -267,7 +268,7 @@ class SessionManager {
     const sessionWithOverride = session as unknown as AgentSessionWithToolOverride;
     sessionWithOverride._baseToolsOverride = baseTools;
     sessionWithOverride._buildRuntime?.({
-      activeToolNames: Object.keys(baseTools),
+      activeToolNames: [...activeToolNames],
       includeAllExtensionTools: true,
     });
 

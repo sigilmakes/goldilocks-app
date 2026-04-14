@@ -1,5 +1,6 @@
-import { mkdir, rm } from 'fs/promises';
-import { resolve, relative } from 'path';
+import { mkdir, readFile as readLocalFile, rm } from 'fs/promises';
+import { dirname, resolve, relative } from 'path';
+import { fileURLToPath } from 'url';
 import { PodManager } from './pod-manager.js';
 
 interface BashOperations {
@@ -28,24 +29,9 @@ interface EditOperations {
   access: (absolutePath: string) => Promise<void>;
 }
 
-interface FindOperations {
-  exists: (absolutePath: string) => Promise<boolean>;
-  glob: (pattern: string, cwd: string, options: { ignore: string[]; limit: number }) => Promise<string[]>;
-}
-
-interface GrepOperations {
-  isDirectory: (absolutePath: string) => Promise<boolean>;
-  readFile: (absolutePath: string) => Promise<string>;
-}
-
-interface LsOperations {
-  exists: (absolutePath: string) => Promise<boolean>;
-  stat: (absolutePath: string) => Promise<{ isDirectory: () => boolean }>;
-  readdir: (absolutePath: string) => Promise<string[]>;
-}
-
 const REMOTE_CWD = '/home/node';
 const PYTHON = 'python3';
+const POD_TOOL_SCRIPTS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), 'pod-tool-scripts');
 
 const MIME_BY_EXT: Record<string, string> = {
   '.png': 'image/png',
@@ -70,17 +56,22 @@ interface ExecResult {
   exitCode: number | null;
 }
 
+interface ExecCommandOptions {
+  stdinData?: string | Buffer;
+}
+
 async function execCommand(
   podManager: PodManager,
   userId: string,
   command: string[],
+  options: ExecCommandOptions = {},
 ): Promise<ExecResult> {
   await podManager.ensurePod(userId);
   podManager.touch(userId);
 
   const exec = await podManager.execInPod(userId, command);
 
-  return new Promise<ExecResult>((resolve, reject) => {
+  return new Promise<ExecResult>((resolveResult, reject) => {
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let stdoutEnded = false;
@@ -93,7 +84,7 @@ async function execCommand(
       if (settled || !stdoutEnded || !stderrEnded || !doneResolved) return;
       settled = true;
       exec.close();
-      resolve({
+      resolveResult({
         stdout: Buffer.concat(stdoutChunks),
         stderr: Buffer.concat(stderrChunks),
         exitCode,
@@ -123,6 +114,7 @@ async function execCommand(
     });
     exec.stdout.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))));
     exec.stderr.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))));
+    exec.stdin.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))));
 
     if (exec.done) {
       exec.done.then((result) => {
@@ -133,6 +125,17 @@ async function execCommand(
         fail(err instanceof Error ? err : new Error(String(err)));
       });
     }
+
+    queueMicrotask(() => {
+      try {
+        if (options.stdinData !== undefined) {
+          exec.stdin.write(options.stdinData);
+        }
+        exec.stdin.end();
+      } catch (err) {
+        fail(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
   });
 }
 
@@ -140,8 +143,9 @@ async function execText(
   podManager: PodManager,
   userId: string,
   command: string[],
+  options?: ExecCommandOptions,
 ): Promise<string> {
-  const result = await execCommand(podManager, userId, command);
+  const result = await execCommand(podManager, userId, command, options);
   if (result.exitCode !== 0) {
     const stderr = result.stderr.toString('utf8').trim();
     throw new Error(stderr || `Command failed with exit code ${result.exitCode ?? 'null'}`);
@@ -158,17 +162,38 @@ async function execBoolean(
   return result.exitCode === 0;
 }
 
+async function getPythonScript(scriptName: string): Promise<string> {
+  const scriptPath = resolve(POD_TOOL_SCRIPTS_DIR, `${scriptName}.py`);
+  return readLocalFile(scriptPath, 'utf8');
+}
+
+async function execPythonScript(
+  podManager: PodManager,
+  userId: string,
+  scriptName: string,
+  args: string[] = [],
+): Promise<string> {
+  const script = await getPythonScript(scriptName);
+
+  try {
+    return await execText(
+      podManager,
+      userId,
+      [PYTHON, '-', ...args],
+      { stdinData: script },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Python helper ${scriptName}.py failed: ${message}`);
+  }
+}
+
 async function readBinaryFile(
   podManager: PodManager,
   userId: string,
   absolutePath: string,
 ): Promise<Buffer> {
-  const encoded = await execText(podManager, userId, [
-    PYTHON,
-    '-c',
-    'import base64,sys; print(base64.b64encode(open(sys.argv[1],"rb").read()).decode("ascii"))',
-    absolutePath,
-  ]);
+  const encoded = await execPythonScript(podManager, userId, 'read-binary-file', [absolutePath]);
   return Buffer.from(encoded.trim(), 'base64');
 }
 
@@ -178,20 +203,9 @@ async function writeBinaryFile(
   absolutePath: string,
   content: Buffer,
 ): Promise<void> {
-  const encoded = content.toString('base64');
-  await execText(podManager, userId, [
-    PYTHON,
-    '-c',
-    [
-      'import base64, os, sys',
-      'path = sys.argv[1]',
-      'os.makedirs(os.path.dirname(path), exist_ok=True)',
-      'with open(path, "wb") as fh:',
-      '    fh.write(base64.b64decode(sys.argv[2]))',
-      'print("ok")',
-    ].join('; '),
+  await execPythonScript(podManager, userId, 'write-binary-file', [
     absolutePath,
-    encoded,
+    content.toString('base64'),
   ]);
 }
 
@@ -207,9 +221,6 @@ export function createPodToolOperations(deps: {
   read: ReadOperations;
   write: WriteOperations;
   edit: EditOperations;
-  find: FindOperations;
-  grep: GrepOperations;
-  ls: LsOperations;
 } {
   const { podManager, userId } = deps;
 
@@ -228,7 +239,7 @@ export function createPodToolOperations(deps: {
 
       const exec = await podManager.execInPod(userId, ['sh', '-lc', script]);
 
-      return new Promise<{ exitCode: number | null }>((resolve, reject) => {
+      return new Promise<{ exitCode: number | null }>((resolveResult, reject) => {
         let settled = false;
         let timer: NodeJS.Timeout | undefined;
 
@@ -242,7 +253,7 @@ export function createPodToolOperations(deps: {
           settled = true;
           cleanup();
           exec.close();
-          resolve({ exitCode });
+          resolveResult({ exitCode });
         };
 
         const fail = (err: Error) => {
@@ -303,7 +314,7 @@ export function createPodToolOperations(deps: {
       await writeBinaryFile(podManager, userId, absolutePath, Buffer.from(content, 'utf8'));
     },
     async mkdir(dir) {
-      await execText(podManager, userId, [PYTHON, '-c', 'import os,sys; os.makedirs(sys.argv[1], exist_ok=True); print("ok")', dir]);
+      await execPythonScript(podManager, userId, 'mkdir', [dir]);
     },
   };
 
@@ -320,71 +331,7 @@ export function createPodToolOperations(deps: {
     },
   };
 
-  const find: FindOperations = {
-    async exists(absolutePath) {
-      return execBoolean(podManager, userId, ['test', '-e', absolutePath]);
-    },
-    async glob(pattern, cwd, options) {
-      const output = await execText(podManager, userId, [
-        PYTHON,
-        '-c',
-        [
-          'import glob, json, os, sys',
-          'pattern = sys.argv[1]',
-          'cwd = sys.argv[2]',
-          'ignore = set(filter(None, sys.argv[3].split("\n")))',
-          'limit = int(sys.argv[4])',
-          'matches = []',
-          'for path in sorted(glob.glob(os.path.join(cwd, pattern), recursive=True)):',
-          '    rel = os.path.relpath(path, cwd)',
-          '    if rel == ".": continue',
-          '    parts = rel.split(os.sep)',
-          '    if any(part in ignore for part in parts): continue',
-          '    matches.append(rel.replace(os.sep, "/"))',
-          '    if len(matches) >= limit: break',
-          'print(json.dumps(matches))',
-        ].join('; '),
-        pattern,
-        cwd,
-        options.ignore.join('\n'),
-        String(options.limit),
-      ]);
-      return JSON.parse(output) as string[];
-    },
-  };
-
-  const grep: GrepOperations = {
-    async isDirectory(absolutePath) {
-      const exists = await execBoolean(podManager, userId, ['test', '-e', absolutePath]);
-      if (!exists) throw new Error(`Path not found: ${absolutePath}`);
-      return execBoolean(podManager, userId, ['test', '-d', absolutePath]);
-    },
-    async readFile(absolutePath) {
-      const buffer = await readBinaryFile(podManager, userId, absolutePath);
-      return buffer.toString('utf8');
-    },
-  };
-
-  const ls: LsOperations = {
-    async exists(absolutePath) {
-      return execBoolean(podManager, userId, ['test', '-e', absolutePath]);
-    },
-    async stat(absolutePath) {
-      const isDirectory = await execBoolean(podManager, userId, ['test', '-d', absolutePath]);
-      return { isDirectory: () => isDirectory };
-    },
-    async readdir(absolutePath) {
-      const output = await execText(podManager, userId, [
-        PYTHON,
-        '-c',
-        'import json, os, sys; print(json.dumps(sorted(os.listdir(sys.argv[1]))))',
-        absolutePath,
-      ]);
-      return JSON.parse(output) as string[];
-    },
-  };
-
-  return { bash, read, write, edit, find, grep, ls };
+  return { bash, read, write, edit };
 }
 
 export async function deleteSessionFile(sessionPath: string): Promise<void> {
