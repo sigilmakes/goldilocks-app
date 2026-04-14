@@ -1,0 +1,22 @@
+FROM node:22-alpine
+
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY apps/agent-service/package.json ./apps/agent-service/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/config/package.json ./packages/config/package.json
+COPY packages/data/package.json ./packages/data/package.json
+COPY packages/runtime/package.json ./packages/runtime/package.json
+RUN npm install
+
+COPY apps/agent-service ./apps/agent-service
+COPY packages ./packages
+
+RUN npm run build:packages
+
+ENV NODE_ENV=development
+WORKDIR /app
+CMD ["npm", "run", "dev:agent-service-stack"]

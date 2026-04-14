@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-service
+  namespace: goldilocks
+  labels:
+    app.kubernetes.io/name: agent-service
+    app.kubernetes.io/component: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-service
+  template:
+    metadata:
+      labels:
+        app: agent-service
+        role: agent-service
+    spec:
+      serviceAccountName: agent-manager
+      containers:
+        - name: agent-service
+          image: goldilocks-agent-service
+          ports:
+            - containerPort: 3001
+              name: http
+          env:
+            - name: NODE_ENV
+              value: development
+            - name: DATA_DIR
+              value: /data
+            - name: K8S_NAMESPACE
+              value: goldilocks
+            - name: AGENT_IMAGE
+              value: goldilocks-agent:latest
+            - name: AGENT_SERVICE_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: agent-service-shared-secret
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: jwt-secret
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: encryption-key
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ['sh', '-c', 'sleep 5']
+          terminationGracePeriodSeconds: 30
+
+      volumes:
+        - name: data
+          hostPath:
+            path: /data/goldilocks
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-service
+  namespace: goldilocks
+  annotations:
+    # Sticky routing ensures gateway connections land on the same agent-service pod
+    # for the lifetime of a WS session.
+    nginx.ingress.kubernetes.io/affinity: cookie
+    nginx.ingress.kubernetes.io/affinity-mode: persistent
+spec:
+  selector:
+    app: agent-service
+  ports:
+    - port: 3001
+      targetPort: 3001
+      name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-service-ws
+  namespace: goldilocks
+spec:
+  selector:
+    app: agent-service
+  ports:
+    - port: 3001
+      targetPort: 3001
+      name: ws
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600

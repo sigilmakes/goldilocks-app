@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 build/
+**/dist/
 *.tsbuildinfo
 
 # Environment
@@ -34,7 +35,8 @@ Thumbs.db
 # Testing
 coverage/
 
-server/data/
+apps/gateway/data/
+packages/*/dist/
 
 # Misc
 *.bak

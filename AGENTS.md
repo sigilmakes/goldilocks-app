@@ -8,96 +8,62 @@ materials scientists set up DFT calculations through a conversational interface.
 ## Running Dev
 
 ```bash
-npm install                   # install both frontend + server workspaces
-bash deploy/setup-dev.sh      # one-time: create kind cluster
-tilt up                       # everything starts — web app, agents, infra
+npm install
+npm run dev:setup            # creates the kind cluster using external state storage
+ tilt up                      # everything starts — frontend, gateway, agent-service, infra
 ```
 
-- Frontend: http://localhost:5173 (Vite HMR via Tilt port-forward)
-- Backend: http://localhost:3000 (Express via Tilt port-forward)
+- Frontend: http://localhost:5173
+- Backend: http://localhost:3000
+- Headlamp: http://localhost:8080
 - Tilt dashboard: http://localhost:10350
 
 Everything runs in kind. Tilt handles image builds, manifest application,
-file syncs (live_update), and port-forwarding. No local servers.
+scoped live_update syncs, and port-forwarding. No local servers.
 
-Edit frontend source → Tilt syncs → Vite HMR in browser (sub-second).
-Edit server source → Tilt syncs → tsx restarts (1-2s).
-Edit agent files → Tilt rebuilds agent image (next pod gets it).
+Edit `apps/frontend/src` → Tilt syncs → Vite HMR.
+Edit `apps/gateway/src` → Tilt syncs → gateway restart.
+Edit `apps/agent-service/src` → Tilt syncs → agent-service restart.
+Edit `packages/*/src` → only dependent services rebuild/restart.
 
-Teardown: `tilt down` (stop services) or `kind delete cluster --name goldilocks` (nuke cluster).
+Teardown: `tilt down` (stop services) or `kind delete cluster --name goldilocks`.
 
 Type checking: `npm run typecheck`
 Build: `npm run build`
-Smoke test: `npm run build && bash test/smoke-test.sh`
+Smoke test: `npm run build && bash apps/gateway/test/smoke-test.sh`
 
 ## Directory Structure
 
-```
+```text
 goldilocks-app/
-├── frontend/                       React 19 + Vite 6 + Tailwind 4 + Zustand 5
-│   └── src/
-│       ├── api/client.ts           Typed fetch wrapper; auto-injects Bearer token from useAuthStore
-│       ├── components/
-│       │   ├── auth/               LoginForm
-│       │   ├── chat/               Extracted from ChatPanel — ToolCallCard, MarkdownContent,
-│       │   │                         MessageBubble, ThinkingBlock, WelcomeMessage
-│       │   ├── layout/             Top-level panels: Header, Sidebar, ChatPanel, ContextPanel
-│       │   ├── science/            Domain cards: KPointsResultCard, InputFileCard,
-│       │   │                         StructureViewer (3Dmol), PredictionSummary,
-│       │   │                         SearchDialog, StructureLibrary
-│       │   └── ui/                 Generic: Toast, Skeleton, ConnectionBanner, MermaidDiagram
-│       ├── hooks/
-│       │   ├── useAgent.ts         WebSocket lifecycle: auth → open → prompt → stream events to store
-│       │   └── useConnectionStatus.ts  Polls /api/health, exponential backoff, online/offline events
-│       ├── pages/                  Login, Workspace (main 3-panel layout), Settings, Docs
-│       ├── store/                  Zustand stores (see "State Management" below)
-│       ├── App.tsx                 React Router routes + ProtectedRoute wrapper
-│       └── main.tsx               Entry point + theme init
-│
-├── server/                         Express 5 + TypeScript + better-sqlite3
-│   └── src/
-│       ├── agent/
-│       │   ├── websocket.ts        WebSocket server: auth → open → prompt → stream Pi SDK events
-│       │   ├── sessions.ts         SessionCache wrapper — selects backend, returns AgentSession
-│       │   ├── session-backend.ts  SessionBackend interface + SessionHandle type
-│       │   ├── container-backend.ts k8s pod per session (via @kubernetes/client-node)
-│       │   ├── k8s-client.ts       Shared KubeConfig/CoreV1Api singleton
-│       │   └── workspace-guard.ts  resolve() + startsWith() path traversal prevention
-│       ├── auth/
-│       │   ├── routes.ts           POST register, login, refresh; GET me
-│       │   ├── middleware.ts       verifyToken (JWT), generateToken; AuthRequest type
-│       │   └── hash.ts            bcrypt password hashing
-│       ├── conversations/routes.ts GET list, POST create, GET/:id, PATCH/:id, DELETE/:id
-│       ├── files/routes.ts         Upload (base64 JSON), download, list, delete; per-conversation
-│       ├── models/routes.ts        GET available LLMs (Pi SDK ModelRegistry)
-│       ├── settings/routes.ts      User settings + encrypted API key CRUD
-│       ├── structures/routes.ts    Search/fetch from JARVIS/MP/MC3D/OQMD + library CRUD
-│       ├── quickgen/routes.ts      POST /api/predict, POST /api/generate (goldilocks CLI, no agent)
-│       ├── config.ts               Centralized typed env vars (CONFIG object)
-│       ├── crypto.ts               AES-256-GCM encrypt/decrypt for stored API keys
-│       ├── db.ts                   SQLite connection (WAL), auto-migration runner
-│       └── index.ts                Express app setup, route registration, WebSocket, static serving
-│
-├── shared/
-│   └── types.ts                    WebSocket message types (ClientMessage, ServerMessage) used by both
-│
-├── Tiltfile                        Dev orchestration: builds, live_update syncs, port-forwards
-├── k8s/                            Kubernetes manifests (namespace, RBAC, web-app, etc.)
-├── deploy/
-│   ├── docker/                     Dockerfiles: web (prod), web.dev (dev), agent, MCP
-│   ├── kind-config.yaml            kind cluster config
-│   └── setup-dev.sh                One-time cluster setup
-├── skills/goldilocks/SKILL.md      Pi agent skill definition (DFT domain knowledge)
-├── test/smoke-test.sh              E2E test: starts server, registers user, hits all endpoints
-├── Dockerfile                      Multi-stage production build (single image: API + frontend)
+├── apps/
+│   ├── frontend/                   React UI
+│   ├── gateway/                    Express API + browser websocket edge
+│   └── agent-service/              Pi SDK harness + internal websocket/API
+├── packages/
+│   ├── contracts/                  shared websocket/internal protocol types
+│   ├── config/                     env/config + crypto helpers
+│   ├── data/                       SQLite + migrations
+│   └── runtime/                    session manager, pod manager, pod tool ops
+├── infra/
+│   ├── docker/                     dev Dockerfiles
+│   ├── k8s/                        manifests used by Tilt
+│   └── kind/                       kind config template
+├── ops/headlamp/                   dashboard manifests + token generation
+├── scripts/
+│   ├── dev-setup.sh                kind bootstrap with external state root
+│   └── goldilocks                  local CLI placeholder
+├── Tiltfile                        dev orchestration
 └── package.json                    npm workspace root
 ```
+
+Rule of the crypt: apps import `packages/*`; apps do **not** import each other.
 
 ## Key Patterns
 
 ### Zustand Stores
 
-All frontend state lives in `frontend/src/store/`. Two patterns:
+All frontend state lives in `apps/frontend/src/store/`. Two patterns:
 
 ```ts
 // Ephemeral (fetched from API, not persisted):
@@ -131,12 +97,12 @@ router.get('/', (req: AuthRequest, res) => { ... });
 export default router;
 ```
 
-Registered in `server/src/index.ts`: `app.use('/api/<path>', router)`
+Registered in `apps/gateway/src/index.ts`: `app.use('/api/<path>', router)`
 
 ### WebSocket Protocol
 
-Defined in `shared/types.ts`, implemented in `server/src/agent/websocket.ts` (server)
-and `frontend/src/hooks/useAgent.ts` (client).
+Defined in `packages/contracts/src/websocket.ts`, implemented in `apps/gateway/src/agent/websocket.ts` (gateway)
+and `apps/frontend/src/hooks/useAgent.ts` (client).
 
 ```
 Client                          Server

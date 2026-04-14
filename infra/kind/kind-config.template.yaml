@@ -1,0 +1,12 @@
+# Template used by scripts/dev-setup.sh for local kind development.
+# The script substitutes __GOLDILOCKS_KIND_DATA_DIR__ with an absolute host path
+# outside the repo, then creates the cluster with that generated config.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: __GOLDILOCKS_KIND_DATA_DIR__
+        containerPath: /data/goldilocks
+        readOnly: false
+        propagation: Bidirectional

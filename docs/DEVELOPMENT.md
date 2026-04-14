@@ -39,26 +39,30 @@ tilt up
 
 ## Dev Workflow
 
-Tilt watches for file changes and live-syncs them into the running container:
-- `server/src/**/*.ts` — live-synced → tsx watch restarts (~1–2s)
-- `frontend/src/**/*.tsx` — live-synced → Vite HMR (instant)
-- `shared/types.ts` — live-synced → both restart
-- `package.json` / `package-lock.json` — full image rebuild
-- `deploy/docker/Dockerfile.agent` — agent image rebuild + kind load
-- `k8s/*.yaml` — re-applied to cluster
+Tilt watches ownership boundaries rather than the whole repo:
+- `apps/frontend/src/**` — Vite HMR in the `web-app` resource
+- `apps/gateway/src/**` — gateway restart in the `web-app` resource
+- `apps/agent-service/src/**` — agent-service restart in the `agent-service` resource
+- `packages/contracts|config|data|runtime/src/**` — only dependent resources restart
+- `ops/headlamp/**` — ops-only updates; should not restart app resources
+- package manifests / lockfile / Dockerfiles — full image rebuilds
+
+Local kind state is created by `npm run dev:setup` under:
+- `${GOLDILOCKS_STATE_DIR}` if set
+- otherwise `./.dev`
 
 ### First-time setup
 
-1. Register a user account at http://localhost:5173 (any email/password)
-2. Go to Settings → API Keys → Add your Anthropic key
+1. Register a user account at http://localhost:5173
+2. Go to Settings → API Keys → add an Anthropic/OpenAI/Google key
 3. Create a conversation and start chatting
 
 ### Resetting
 
 ```bash
-tilt down            # stop services
-npm run dev:reset   # delete cluster and all data
-npm run dev:setup   # start fresh
+tilt down
+npm run dev:reset
+npm run dev:setup
 tilt up
 ```
 
@@ -69,43 +73,41 @@ tilt up
 The project uses [Vitest](https://vitest.dev/) for unit and integration tests.
 
 ```bash
-# Run all tests
-npm test
+# Run all tests (preferred in the project dev shell so native deps match)
+nix develop -c npm test
 
 # Watch mode
 npm run test:watch
 
-# Vitest UI (browser-based test viewer)
+# Vitest UI
 npm run test:ui
 
-# Bash smoke test against a live kind cluster
+# Smoke test against the built gateway
 npm run smoke
 ```
 
 ### What the tests cover
 
-- **`test/api/auth.test.ts`** — Register, login, JWT validation, error cases
-- **`test/api/conversations.test.ts`** — CRUD, ownership isolation, 404 handling
-- **`test/api/settings.test.ts`** — Settings GET/PATCH, API key CRUD
-- **`test/api/files.test.ts`** — File CRUD, upload, mkdir, move, delete, path traversal
-- **`frontend/src/lib/fileKinds.test.ts`** — Pure function tests for file kind resolution
+- **`apps/gateway/test/api/*.test.ts`** — Auth, conversations, settings, and file-route integration tests
+- **`packages/runtime/test/*.test.ts`** — Pod manager, pod tool operations, session manager
+- **`packages/config/test/config.test.ts`** — config/env edge cases
+- **`apps/frontend/src/lib/fileKinds.test.ts`** — pure frontend file-kind logic
 
-API tests use an in-process Express server with:
-  - Fresh SQLite DB per test suite
-  - Stubbed sessionManager (no k8s cluster needed)
-  - File operations use the local filesystem instead of k8s exec
+Gateway API tests use an in-process Express server with:
+- a fresh SQLite DB per suite
+- a stubbed pod manager / session manager surface
+- local filesystem-backed file operations instead of real k8s exec
 
-The smoke test (`test/smoke-test.sh`) runs against a real kind cluster and covers
-all API endpoints including models and quickgen (which need a running pod).
+The smoke test lives at `apps/gateway/test/smoke-test.sh` and runs against the built gateway.
 
 ### Debugging
 
 ### Headlamp dashboard
 
-Tilt port-forwards Headlamp to `http://localhost:8080` and generates a dev login token at `.dev/headlamp-token.txt`.
+Tilt port-forwards Headlamp to `http://localhost:8080` and generates a dev login token under the local state root:
 
 ```bash
-cat .dev/headlamp-token.txt
+cat "${GOLDILOCKS_STATE_DIR:-$PWD/.dev}/headlamp/headlamp-token.txt"
 ```
 
 If the token expires or the file is missing, regenerate it through Tilt:
@@ -114,7 +116,7 @@ If the token expires or the file is missing, regenerate it through Tilt:
 tilt trigger headlamp-token
 ```
 
-Headlamp runs in-cluster with a dedicated `headlamp` runtime service account, but the Tilt-generated login token comes from a separate `headlamp-admin` service account bound to `cluster-admin` for local dev. This matches Headlamp's documented model better: the login token carries the RBAC for what the UI can browse.
+Headlamp runs in-cluster with a dedicated `headlamp` runtime service account, but the Tilt-generated login token comes from a separate `headlamp-admin` service account bound to `cluster-admin` for local dev.
 
 ### Logs
 
@@ -170,165 +172,48 @@ Check the Bridge logs for stderr from pi. Common causes:
 
 ### Inspecting the database
 
+If you are running locally outside Kubernetes, the DB defaults to:
+
 ```bash
-sqlite3 data/goldilocks.db
+sqlite3 "${GOLDILOCKS_STATE_DIR:-$PWD/.dev}/goldilocks.db"
 > SELECT id, title, pi_session_id FROM conversations;
 > SELECT user_id, provider FROM api_keys;
 ```
 
+In kind dev, the DB lives inside the kind host mount under the local state root created by `npm run dev:setup`.
+
 ### Inspecting user files
 
-User home directories are at `data/homes/<userId>/`:
-
-```bash
-ls data/homes/
-ls data/homes/<userId>/.pi/agent/sessions/
-```
+Sandbox home directories are mounted under the kind host data directory created by `scripts/dev-setup.sh`.
+The exact location is printed when the cluster is created.
 
 ## Project Structure
 
-```
+For the current monorepo layout, see **[docs/architecture/repo-layout.md](architecture/repo-layout.md)**.
+
+High-level summary:
+
+```text
 goldilocks-app/
-├── shared/
-│   └── types.ts                  WebSocket protocol types (ClientMessage, ServerMessage)
-│
-├── server/src/                     ── Gateway ──
-│   ├── index.ts                  Express entry point, signal handling, shutdown drain
-│   ├── app.ts                    App factory: routes, rate limiting, health/ready/metrics endpoints
-│   ├── config.ts                 Centralized typed env vars (CONFIG object)
-│   ├── db.ts                     SQLite setup (WAL mode), migration lock, auto-migration runner
-│   ├── crypto.ts                 AES-256-GCM encrypt/decrypt for stored API keys
-│   │
-│   ├── agent/
-│   │   ├── websocket.ts          WS relay: browser auth → internal WS to agent-service, keepalive, TTFT
-│   │   ├── agent-service-client.ts HTTP proxy to agent-service (shared-secret auth)
-│   │   ├── relay-metrics.ts      Connection counters, auth stats, TTFT percentile histogram
-│   │   ├── sessions.ts           (used by gateway for model/conversation REST proxy)
-│   │   ├── pod-manager.ts        k8s pod/volume lifecycle, exec streams, idle eviction
-│   │   ├── k8s-client.ts         Thin k8s API client wrapper
-│   │   ├── pod-tool-operations.ts Pod-backed Bash/Read/Write/Edit/Find/Grep/Ls for Pi SDK tools
-│   │   └── workspace-guard.ts    Path traversal protection for exec commands
-│   │
-│   ├── auth/
-│   │   ├── routes.ts             POST register, login; GET me
-│   │   └── middleware.ts         verifyToken (JWT), AuthRequest type
-│   │
-│   ├── conversations/routes.ts    GET list, POST create, DELETE (proxies cleanup to agent-service)
-│   ├── files/routes.ts           Workspace file CRUD via k8s exec
-│   ├── models/routes.ts           GET available LLMs, POST select (proxied to agent-service)
-│   ├── settings/routes.ts         GET/PATCH settings, API key CRUD
-│   ├── structures/routes.ts       Structure CRUD + search
-│   └── quickgen/routes.ts         POST /predict, POST /generate
-│
-├── agent-service/src/              ── Agent Service ──
-│   ├── index.ts                    WS server, Pi SDK sessions, internal WS protocol, metrics
-│   ├── metrics.ts                  Counters, auth stats, TTFT percentile histogram
-│   └── (imports from ../../server/src/ for shared config, db, sessions, pod-tool-ops)
-│
-├── frontend/src/
-│   ├── main.tsx                  Entry point
-│   ├── App.tsx                   Router: /login, /settings (lazy), /* → Workspace
-│   ├── api/
-│   │   └── client.ts             Typed fetch wrapper; auto-injects Bearer token
-│   │
-│   ├── hooks/
-│   │   ├── useAgent.ts           WebSocket lifecycle: auth → open → prompt → stream to store
-│   │   └── useConnectionStatus.ts Polls /api/health, exponential backoff, online/offline
-│   │
-│   ├── store/
-│   │   ├── auth.ts               User session, JWT, login/logout/register
-│   │   ├── chat.ts               Messages, streaming state, active tool calls
-│   │   ├── chatPrompt.ts         Pending prompt queue for seeded conversations
-│   │   ├── conversations.ts      Conversation list, active conversation
-│   │   ├── context.ts            ML prediction result, generation defaults
-│   │   ├── files.ts               Workspace file tree (tree + flat index)
-│   │   ├── models.ts             Available LLM models, selected model
-│   │   ├── settings.ts           Theme, defaultModel, defaultFunctional, API key metadata
-│   │   ├── tabs.ts               Open tabs, active tab (persisted until logout)
-│   │   ├── toast.ts               Notification queue
-│   │   └── session-reset.ts      resetUserScopedFrontendState() — clears all user-scoped state
-│   │
-│   ├── lib/
-│   │   ├── fileKinds.ts          Canonical file-kind registry: viewer, icon, Monaco language
-│   │   ├── fileAssociations.ts    getFileExtension helper
-│   │   └── promptTemplates.ts    Structured prompt templates for QE generation
-│   │
-│   ├── components/
-│   │   ├── ErrorBoundary.tsx     Top-level render error boundary
-│   │   │
-│   │   ├── auth/
-│   │   │   └── LoginForm.tsx
-│   │   │
-│   │   ├── chat/
-│   │   │   ├── MessageBubble.tsx     User/assistant message rendering
-│   │   │   ├── ToolCallCard.tsx      Tool call streaming + result display
-│   │   │   ├── MarkdownContent.tsx   Markdown renderer (marked + sanitized)
-│   │   │   └── WelcomeMessage.tsx    Empty-conversation landing
-│   │   │
-│   │   ├── layout/
-│   │   │   ├── Header.tsx             Model selector, theme, sidebar toggle, user menu
-│   │   │   ├── ChatPanel.tsx          Message list + input area
-│   │   │   └── GenerationDefaultsPopover.tsx  DFT param quick-set popover
-│   │   │
-│   │   ├── science/
-│   │   │   ├── StructureViewer.tsx    3Dmol.js crystal structure viewer
-│   │   │   └── PredictionSummary.tsx  ML k-point prediction result display
-│   │   │
-│   │   ├── shell/
-│   │   │   ├── AppShell.tsx           Root layout: sidebar + center + mobile
-│   │   │   ├── SidebarHost.tsx        Conversation/workspace sidebar swap
-│   │   │   ├── TabStrip.tsx            Tab bar
-│   │   │   └── TabContentHost.tsx      Tab content router
-│   │   │
-│   │   ├── sidebar/
-│   │   │   ├── ConversationSidebar.tsx  Conversation list + new conversation button
-│   │   │   └── WorkspaceSidebar.tsx     Workspace file tree + new/upload buttons
-│   │   │
-│   │   ├── views/
-│   │   │   ├── ConversationView.tsx    ChatPanel wrapper
-│   │   │   ├── FileView.tsx            FileBrowser + FileViewer side by side
-│   │   │   ├── StructureView.tsx       StructureViewer (full pane)
-│   │   │   └── WelcomeView.tsx         Empty state
-│   │   │
-│   │   ├── workspace/
-│   │   │   ├── FileBrowser.tsx         Tree view + search + context menus
-│   │   │   ├── FileViewer.tsx          Viewer router + lazy-load boundary
-│   │   │   ├── MilkdownEditor.tsx     Markdown editor (lazy-loaded)
-│   │   │   ├── MonacoEditor.tsx        Code editor (lazy-loaded)
-│   │   │   ├── PdfViewer.tsx           PDF renderer (lazy-loaded)
-│   │   │   └── ImageViewer.tsx         Image renderer (lazy-loaded)
-│   │   │
-│   │   └── ui/
-│   │       ├── Toast.tsx               Notification component
-│   │       ├── Skeleton.tsx            Loading placeholder
-│   │       ├── ConnectionBanner.tsx    WebSocket status banner
-│   │       └── MermaidDiagram.tsx      Mermaid.js renderer
-│   │
-│   └── pages/
-│       ├── Login.tsx
-│       ├── Workspace.tsx             Thin wrapper: <AppShell />
-│       └── Settings.tsx              API keys, defaults, theme (lazy-loaded)
-│
-├── k8s/                              Kubernetes manifests
-│   ├── namespace.yaml
-│   ├── rbac.yaml
-│   ├── web-app.yaml                  Gateway deployment + service
-│   ├── agent-service.yaml            Agent service deployment + services (HTTP + WS)
-│   ├── web-app-hpa.yaml              Gateway horizontal pod autoscaler
-│   └── agent-service-hpa.yaml         Agent service HPA (CPU + custom metric)
-├── deploy/
+├── apps/
+│   ├── frontend/
+│   ├── gateway/
+│   └── agent-service/
+├── packages/
+│   ├── contracts/
+│   ├── config/
+│   ├── data/
+│   └── runtime/
+├── infra/
 │   ├── docker/
-│   │   ├── Dockerfile.web.dev        Dev gateway (tsx watch + Vite)
-│   │   ├── Dockerfile.agent-service.dev  Dev agent service
-│   │   └── Dockerfile.agent          Sandbox container (sleep infinity, no pi)
-│   └── kind-config.yaml              Kind cluster config with hostPath bind-mounts
-├── dashboard/                        Headlamp ops dashboard (in-cluster)
-│   ├── k8s/headlamp.yaml
-│   └── k8s/headlamp-rbac.yaml
-├── skills/
-│   └── goldilocks/SKILL.md           Pi agent skill definition (DFT domain knowledge)
-└── Tiltfile                           Dev orchestration: builds, live_update, port-forwards
+│   ├── k8s/
+│   └── kind/
+├── ops/headlamp/
+├── scripts/
+└── Tiltfile
 ```
+
+Code rule: apps import from `packages/*`; apps do not import each other.
 
 ## Code Conventions
 
