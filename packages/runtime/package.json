@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node ./scripts/copy-pod-tool-scripts.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'runtime: no lint configured'"
   },

@@ -42,13 +42,14 @@ Creates and manages Pi SDK `AgentSession` instances, keyed by `userId:conversati
 
 ### Pod Tool Operations (`pod-tool-operations.ts`)
 
-Provides pluggable operations backends for the Pi SDK's built-in tools. Instead of running tools locally, all execution is routed through the user's sandbox pod via k8s exec:
+Provides pluggable operations backends for the Pi SDK's built-in tools. Instead of running tools locally, Goldilocks routes the supported tool surface through the user's sandbox pod via k8s exec while leaving the Pi SDK's tool semantics intact:
 
 - **Bash**: `execInPod(userId, command)` with stdout/stderr streaming and exit status
-- **Read**: `cat` the file from the pod, detect image mime types
-- **Write**: base64-encoded content piped to the pod filesystem
-- **Edit**: read-modify-write via pod exec
-- **Find/Grep/Ls**: shell commands in the pod
+- **Read**: dedicated Python helper script streamed to `python3 -` inside the pod, then decoded back into the SDK's read flow
+- **Write**: dedicated Python helper script streamed to `python3 -` inside the pod, with parent-directory creation handled remotely
+- **Edit**: the Pi SDK's normal read/modify/write logic, backed by the same remote read/write helper scripts
+
+Goldilocks intentionally exposes only **`read`**, **`write`**, **`edit`**, and **`bash`** to the agent. `find`, `grep`, and `ls` are not part of the runtime surface here; if the agent needs shell-style discovery, it can use `bash`.
 
 This keeps all tool execution in the pod (the "hands") while the SDK orchestrates reasoning in the agent-service (the "brain").
 
