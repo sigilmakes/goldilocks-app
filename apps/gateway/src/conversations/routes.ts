@@ -194,7 +194,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     try {
       const response = await agentServiceFetch('/internal/sessions/delete', {
         method: 'POST',
-        userId: req.user.id,
+        userToken: req.authToken!,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionPath: row.pi_session_id }),
       });

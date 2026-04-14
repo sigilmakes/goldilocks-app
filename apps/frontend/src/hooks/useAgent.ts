@@ -4,11 +4,11 @@ import { useChatStore } from '../store/chat';
 import { useFilesStore } from '../store/files';
 import type { ServerMessage } from '@goldilocks/contracts';
 
-export type AgentStatus = 'disconnected' | 'connecting' | 'authenticating' | 'opening' | 'ready';
+export type AgentStatus = 'disconnected' | 'connecting' | 'opening' | 'ready';
 
 export function useAgent(conversationId: string | null) {
   const ws = useRef<WebSocket | null>(null);
-  const token = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [status, setStatus] = useState<AgentStatus>('disconnected');
   const [error, setError] = useState<string | null>(null);
 
@@ -28,7 +28,7 @@ export function useAgent(conversationId: string | null) {
 
   useEffect(() => {
     const generation = ++generationRef.current;
-    if (!conversationId || !token) {
+    if (!conversationId || !isAuthenticated) {
       setStatus('disconnected');
       return;
     }
@@ -46,9 +46,9 @@ export function useAgent(conversationId: string | null) {
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     socket.onopen = () => {
-      setStatus('authenticating');
+      setStatus('opening');
       setError(null);
-      socket.send(JSON.stringify({ type: 'auth', token }));
+      socket.send(JSON.stringify({ type: 'open', conversationId }));
     };
 
     socket.onmessage = (event) => {
@@ -66,48 +66,37 @@ export function useAgent(conversationId: string | null) {
       const store = useChatStore.getState();
 
       switch (msg.type) {
-        case 'auth_ok':
-          setStatus('opening');
-          socket.send(JSON.stringify({ type: 'open', conversationId }));
-          break;
-
-        case 'auth_fail':
-          setError(msg.error);
-          setStatus('disconnected');
-          break;
-
         case 'ready': {
-          // Load message history from pi if available
           if (msg.messages && msg.messages.length > 0) {
             const chatMessages = msg.messages.map((m) => {
               if (m.role === 'user') {
                 return { role: 'user' as const, text: m.text, timestamp: Date.now() };
-              } else {
-                const blocks: import('../store/chat').AssistantBlock[] = [];
-                if (m.text) {
-                  blocks.push({ type: 'text' as const, content: m.text });
-                }
-                if (m.toolCalls) {
-                  for (const tc of m.toolCalls) {
-                    blocks.push({
-                      type: 'tool_call' as const,
-                      data: {
-                        toolCallId: tc.toolCallId,
-                        toolName: tc.toolName,
-                        args: tc.args,
-                        result: tc.result,
-                        isError: tc.isError,
-                        status: 'done' as const,
-                      },
-                    });
-                  }
-                }
-                return {
-                  role: 'assistant' as const,
-                  blocks,
-                  timestamp: Date.now(),
-                };
               }
+
+              const blocks: import('../store/chat').AssistantBlock[] = [];
+              if (m.text) {
+                blocks.push({ type: 'text' as const, content: m.text });
+              }
+              if (m.toolCalls) {
+                for (const tc of m.toolCalls) {
+                  blocks.push({
+                    type: 'tool_call' as const,
+                    data: {
+                      toolCallId: tc.toolCallId,
+                      toolName: tc.toolName,
+                      args: tc.args,
+                      result: tc.result,
+                      isError: tc.isError,
+                      status: 'done' as const,
+                    },
+                  });
+                }
+              }
+              return {
+                role: 'assistant' as const,
+                blocks,
+                timestamp: Date.now(),
+              };
             });
             store.setMessages(chatMessages);
           }
@@ -173,7 +162,7 @@ export function useAgent(conversationId: string | null) {
         refreshWorkspaceTimerRef.current = null;
       }
     };
-  }, [conversationId, token, scheduleWorkspaceRefresh]);
+  }, [conversationId, isAuthenticated, scheduleWorkspaceRefresh]);
 
   const isReady = status === 'ready';
 

@@ -1,7 +1,11 @@
-import { IncomingMessage } from 'http';
-import jwt from 'jsonwebtoken';
+import { IncomingMessage, Server as HttpServer } from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { CONFIG } from '@goldilocks/config';
+import {
+  getTokenFromCookieHeader,
+  verifySignedToken,
+  type AuthUser,
+} from '../auth/middleware.js';
 import {
   recordAgentConnectionClosed,
   recordAgentConnectionOpened,
@@ -13,16 +17,40 @@ import {
 } from './relay-metrics.js';
 import type { ClientMessage, ServerMessage } from '@goldilocks/contracts';
 
-interface AuthUser {
-  id: string;
-  email: string;
-}
-
 interface GatewayToAgentMessage {
   type: 'auth';
-  userId: string;
   gatewayToken: string;
+  userToken: string;
 }
+
+interface AgentAuthOkMessage {
+  type: 'auth_ok';
+  userId: string;
+}
+
+interface AgentAuthFailMessage {
+  type: 'auth_fail';
+  error: string;
+}
+
+interface AuthenticatedWebSocketRequest extends IncomingMessage {
+  authContext?: {
+    user: AuthUser;
+    token: string;
+  };
+}
+
+export type WebSocketUpgradeAuthResult =
+  | {
+      ok: true;
+      token: string;
+      user: AuthUser;
+    }
+  | {
+      ok: false;
+      status: 401 | 403;
+      error: string;
+    };
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 60_000;
@@ -41,10 +69,86 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   }
 }
 
-export function setupWebSocket(wss: WebSocketServer): void {
-  wss.on('connection', (browserWs: WebSocket, _req: IncomingMessage) => {
+function rejectUpgrade(socket: import('stream').Duplex, status: 401 | 403, error: string): void {
+  const statusText = status === 403 ? 'Forbidden' : 'Unauthorized';
+  socket.write(
+    `HTTP/1.1 ${status} ${statusText}\r\n` +
+    'Connection: close\r\n' +
+    'Content-Type: text/plain\r\n' +
+    `Content-Length: ${Buffer.byteLength(error)}\r\n` +
+    '\r\n' +
+    error,
+  );
+  socket.destroy();
+}
+
+export function authenticateWebSocketUpgrade(req: IncomingMessage): WebSocketUpgradeAuthResult {
+  const origin = req.headers.origin;
+  if (!origin || !CONFIG.allowedWebSocketOrigins.includes(origin)) {
+    return { ok: false, status: 403, error: 'WebSocket origin not allowed' };
+  }
+
+  const token = getTokenFromCookieHeader(req.headers.cookie);
+  if (!token) {
+    return { ok: false, status: 401, error: 'Missing session cookie' };
+  }
+
+  try {
+    const claims = verifySignedToken(token);
+    return {
+      ok: true,
+      token,
+      user: {
+        id: claims.id,
+        email: claims.email,
+        jti: claims.jti,
+      },
+    };
+  } catch {
+    return { ok: false, status: 401, error: 'Invalid, expired, or revoked token' };
+  }
+}
+
+export function setupWebSocket(server: HttpServer): WebSocketServer {
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    const pathname = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`).pathname;
+    if (pathname !== '/ws') {
+      socket.destroy();
+      return;
+    }
+
+    const authResult = authenticateWebSocketUpgrade(req);
+    recordAuthAttempt(authResult.ok);
+
+    if (!authResult.ok) {
+      rejectUpgrade(socket, authResult.status, authResult.error);
+      return;
+    }
+
+    const authReq = req as AuthenticatedWebSocketRequest;
+    authReq.authContext = {
+      user: authResult.user,
+      token: authResult.token,
+    };
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, authReq);
+    });
+  });
+
+  wss.on('connection', (browserWs: WebSocket, req: IncomingMessage) => {
+    const authReq = req as AuthenticatedWebSocketRequest;
+    const authContext = authReq.authContext;
+    if (!authContext) {
+      browserWs.close();
+      return;
+    }
+
     recordBrowserConnectionOpened();
-    let browserUser: AuthUser | null = null;
+    const browserUser = authContext.user;
+    const browserToken = authContext.token;
     let agentWs: WebSocket | null = null;
     let agentReady = false;
     let agentGeneration = 0;
@@ -101,125 +205,112 @@ export function setupWebSocket(wss: WebSocketServer): void {
       }
     };
 
+    const connectToAgentService = () => {
+      cleanupAgentConnection();
+
+      const connectionGeneration = agentGeneration;
+      const nextAgentWs = new WebSocket(CONFIG.agentServiceWsUrl);
+      agentWs = nextAgentWs;
+      recordAgentConnectionOpened();
+
+      // ── Agent keepalive ──
+      // Same pattern: ping at interval, enforce pong timeout.
+      let agentLastPong = Date.now();
+      const agentHeartbeat = setInterval(() => {
+        if (nextAgentWs.readyState !== WebSocket.OPEN) {
+          clearInterval(agentHeartbeat);
+          return;
+        }
+        nextAgentWs.ping();
+
+        if (Date.now() - agentLastPong > HEARTBEAT_TIMEOUT_MS) {
+          console.warn('Agent service WebSocket pong timeout — closing connection');
+          nextAgentWs.terminate();
+          clearInterval(agentHeartbeat);
+        }
+      }, HEARTBEAT_INTERVAL_MS);
+      currentAgentHeartbeat = agentHeartbeat;
+
+      nextAgentWs.on('pong', () => {
+        agentLastPong = Date.now();
+      });
+
+      nextAgentWs.on('open', () => {
+        if (connectionGeneration !== agentGeneration) return;
+        const authMessage: GatewayToAgentMessage = {
+          type: 'auth',
+          gatewayToken: CONFIG.agentServiceSharedSecret,
+          userToken: browserToken,
+        };
+        nextAgentWs.send(JSON.stringify(authMessage));
+      });
+
+      nextAgentWs.on('message', (agentRaw) => {
+        if (connectionGeneration !== agentGeneration) return;
+
+        let agentMsg: ServerMessage | AgentAuthOkMessage | AgentAuthFailMessage;
+        try {
+          agentMsg = JSON.parse(agentRaw.toString()) as ServerMessage | AgentAuthOkMessage | AgentAuthFailMessage;
+        } catch {
+          send(browserWs, { type: 'error', error: 'Invalid agent-service message' });
+          return;
+        }
+
+        if (agentMsg.type === 'auth_ok') {
+          agentReady = true;
+          flushPending();
+          return;
+        }
+
+        if (agentMsg.type === 'auth_fail') {
+          send(browserWs, { type: 'error', error: agentMsg.error });
+          cleanupAgentConnection();
+          return;
+        }
+
+        // TTFT: record time from prompt send to first meaningful output
+        if (promptSentAt !== null && TTFT_CLEAR_TYPES.has(agentMsg.type)) {
+          recordTtft(Date.now() - promptSentAt);
+          promptSentAt = null;
+        }
+
+        send(browserWs, agentMsg);
+      });
+
+      nextAgentWs.on('close', () => {
+        clearInterval(agentHeartbeat);
+        if (currentAgentHeartbeat === agentHeartbeat) {
+          currentAgentHeartbeat = null;
+        }
+        if (connectionGeneration !== agentGeneration) {
+          // Stale socket — counter already decremented by cleanupAgentConnection()
+          return;
+        }
+        // Spontaneous disconnect — counter was not decremented yet
+        recordAgentConnectionClosed();
+        agentReady = false;
+        agentWs = null;
+        if (browserWs.readyState === WebSocket.OPEN) {
+          send(browserWs, { type: 'error', error: 'Agent service disconnected' });
+        }
+      });
+
+      nextAgentWs.on('error', (err) => {
+        if (connectionGeneration !== agentGeneration) return;
+        console.error('Agent service WebSocket error:', err);
+        recordRelayError();
+        send(browserWs, { type: 'error', error: 'Agent service connection error' });
+      });
+    };
+
+    connectToAgentService();
+
     browserWs.on('message', (raw) => {
       let msg: ClientMessage;
       try {
         msg = JSON.parse(raw.toString()) as ClientMessage;
       } catch {
         send(browserWs, { type: 'error', error: 'Invalid JSON' });
-        return;
-      }
-
-      if (msg.type === 'auth') {
-        cleanupAgentConnection();
-
-        try {
-          const payload = jwt.verify(msg.token, CONFIG.jwtSecret) as AuthUser;
-          recordAuthAttempt(true);
-          browserUser = payload;
-          const connectionGeneration = agentGeneration;
-          const nextAgentWs = new WebSocket(CONFIG.agentServiceWsUrl);
-          agentWs = nextAgentWs;
-          recordAgentConnectionOpened();
-
-          // ── Agent keepalive ──
-          // Same pattern: ping at interval, enforce pong timeout.
-          let agentLastPong = Date.now();
-          const agentHeartbeat = setInterval(() => {
-            if (nextAgentWs.readyState !== WebSocket.OPEN) {
-              clearInterval(agentHeartbeat);
-              return;
-            }
-            nextAgentWs.ping();
-
-            if (Date.now() - agentLastPong > HEARTBEAT_TIMEOUT_MS) {
-              console.warn('Agent service WebSocket pong timeout — closing connection');
-              nextAgentWs.terminate();
-              clearInterval(agentHeartbeat);
-            }
-          }, HEARTBEAT_INTERVAL_MS);
-          currentAgentHeartbeat = agentHeartbeat;
-
-          nextAgentWs.on('pong', () => {
-            agentLastPong = Date.now();
-          });
-
-          nextAgentWs.on('open', () => {
-            if (connectionGeneration !== agentGeneration) return;
-            const authMessage: GatewayToAgentMessage = {
-              type: 'auth',
-              userId: payload.id,
-              gatewayToken: CONFIG.agentServiceSharedSecret,
-            };
-            nextAgentWs.send(JSON.stringify(authMessage));
-          });
-
-          nextAgentWs.on('message', (agentRaw) => {
-            if (connectionGeneration !== agentGeneration) return;
-
-            let agentMsg: ServerMessage;
-            try {
-              agentMsg = JSON.parse(agentRaw.toString()) as ServerMessage;
-            } catch {
-              send(browserWs, { type: 'error', error: 'Invalid agent-service message' });
-              return;
-            }
-
-            if (agentMsg.type === 'auth_ok') {
-              agentReady = true;
-              send(browserWs, { type: 'auth_ok', userId: payload.id });
-              flushPending();
-              return;
-            }
-
-            if (agentMsg.type === 'auth_fail') {
-              send(browserWs, agentMsg);
-              cleanupAgentConnection();
-              return;
-            }
-
-            // TTFT: record time from prompt send to first meaningful output
-            if (promptSentAt !== null && TTFT_CLEAR_TYPES.has(agentMsg.type)) {
-              recordTtft(Date.now() - promptSentAt);
-              promptSentAt = null;
-            }
-
-            send(browserWs, agentMsg);
-          });
-
-          nextAgentWs.on('close', () => {
-            clearInterval(agentHeartbeat);
-            if (currentAgentHeartbeat === agentHeartbeat) {
-              currentAgentHeartbeat = null;
-            }
-            if (connectionGeneration !== agentGeneration) {
-              // Stale socket — counter already decremented by cleanupAgentConnection()
-              return;
-            }
-            // Spontaneous disconnect — counter was not decremented yet
-            recordAgentConnectionClosed();
-            agentReady = false;
-            agentWs = null;
-            if (browserWs.readyState === WebSocket.OPEN) {
-              send(browserWs, { type: 'error', error: 'Agent service disconnected' });
-            }
-          });
-
-          nextAgentWs.on('error', (err) => {
-            if (connectionGeneration !== agentGeneration) return;
-            console.error('Agent service WebSocket error:', err);
-            recordRelayError();
-            send(browserWs, { type: 'error', error: 'Agent service connection error' });
-          });
-        } catch {
-          recordAuthAttempt(false);
-          send(browserWs, { type: 'auth_fail', error: 'Invalid or expired token' });
-        }
-        return;
-      }
-
-      if (!browserUser) {
-        send(browserWs, { type: 'error', error: 'Not authenticated' });
         return;
       }
 
@@ -248,4 +339,6 @@ export function setupWebSocket(wss: WebSocketServer): void {
       cleanupAgentConnection();
     });
   });
+
+  return wss;
 }

@@ -11,7 +11,6 @@
  */
 
 import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
 import { createApp } from './app.js';
 import { CONFIG } from '@goldilocks/config';
 import { runMigrations, closeDb } from '@goldilocks/data';
@@ -25,8 +24,7 @@ export const app = createApp();
 const server = createServer(app);
 
 // WebSocket
-const wss = new WebSocketServer({ server, path: '/ws' });
-setupWebSocket(wss);
+const wss = setupWebSocket(server);
 
 // Graceful shutdown
 let shuttingDown = false;

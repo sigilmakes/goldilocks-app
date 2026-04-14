@@ -1,9 +1,9 @@
 /**
- * Shared WebSocket message types used by both the frontend client and backend server.
+ * Shared browser WebSocket message types used by both the frontend client and gateway.
  *
- * Client → Server: auth, open, prompt, abort
- * Server → Client: auth_ok, auth_fail, ready, text_delta, thinking_delta,
- *                   tool_start, tool_update, tool_end, message_end, agent_end, error
+ * Client → Server: open, prompt, abort
+ * Server → Client: ready, text_delta, thinking_delta, tool_start,
+ *                   tool_update, tool_end, message_end, agent_end, error
  */
 
 // ---------------------------------------------------------------------------
@@ -11,7 +11,6 @@
 // ---------------------------------------------------------------------------
 
 export type ClientMessage =
-  | { type: 'auth'; token: string }
   | { type: 'open'; conversationId: string }
   | { type: 'prompt'; text: string; files?: string[] }
   | { type: 'abort' };
@@ -21,8 +20,6 @@ export type ClientMessage =
 // ---------------------------------------------------------------------------
 
 export type ServerMessage =
-  | { type: 'auth_ok'; userId: string }
-  | { type: 'auth_fail'; error: string }
   | { type: 'ready'; conversationId: string; messages?: HistoryMessage[] }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }

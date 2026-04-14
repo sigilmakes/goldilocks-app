@@ -53,3 +53,31 @@ describe('CONFIG required secrets', () => {
     expect(() => CONFIG.validateRequiredSecrets()).not.toThrow();
   });
 });
+
+describe('CONFIG auth defaults', () => {
+  it('uses cookie-session auth defaults tuned for wave 2', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.JWT_SECRET = 'test-jwt-not-for-prod';
+    process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
+    process.env.AGENT_SERVICE_SHARED_SECRET = 'test-agent-shared-secret';
+
+    const { CONFIG } = await loadConfig();
+    expect(CONFIG.jwtExpiresIn).toBe('8h');
+    expect(CONFIG.sessionCookieName).toBe('goldilocks-session');
+    expect(CONFIG.jwtIssuer).toBe('goldilocks-gateway');
+    expect(CONFIG.jwtAudience).toBe('goldilocks-api');
+    expect(CONFIG.sessionCookieMaxAgeMs).toBe(28_800_000);
+  });
+
+  it('builds websocket origin allowlist from frontendUrl plus localhost dev origin', async () => {
+    process.env.NODE_ENV = 'development';
+    process.env.FRONTEND_URL = 'https://goldilocks.example';
+    process.env.JWT_SECRET = 'test-jwt-not-for-prod';
+    process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
+    process.env.AGENT_SERVICE_SHARED_SECRET = 'test-agent-shared-secret';
+
+    const { CONFIG } = await loadConfig();
+    expect(CONFIG.allowedWebSocketOrigins).toContain('https://goldilocks.example');
+    expect(CONFIG.allowedWebSocketOrigins).toContain('http://localhost:5173');
+  });
+});

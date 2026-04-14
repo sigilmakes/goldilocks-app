@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Maximize, ZoomIn, ZoomOut } from 'lucide-react';
-import { getAuthHeaders, rawFileUrl } from '../../api/client';
+import { rawFileUrl } from '../../api/client';
 import { useSettingsStore } from '../../store/settings';
 
 function backgroundStyle(background: 'checkered' | 'dark' | 'light') {
@@ -34,7 +34,7 @@ export default function ImageViewer({ path }: { path: string }) {
     let cancelled = false;
     setLoading(true);
 
-    fetch(rawFileUrl(path), { headers: getAuthHeaders() })
+    fetch(rawFileUrl(path), { credentials: 'include' })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.blob();

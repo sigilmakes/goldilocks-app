@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { getAuthHeaders, rawFileUrl } from '../../api/client';
+import { rawFileUrl } from '../../api/client';
 import { useSettingsStore } from '../../store/settings';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -36,7 +36,7 @@ export default function PdfViewer({ path }: { path: string }) {
 
     async function loadPdf() {
       try {
-        const response = await fetch(rawFileUrl(path), { headers: getAuthHeaders() });
+        const response = await fetch(rawFileUrl(path), { credentials: 'include' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }

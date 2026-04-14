@@ -13,7 +13,7 @@ router.get('/', verifyToken, async (req: AuthRequest, res: Response) => {
   try {
     const response = await agentServiceFetch('/internal/models', {
       method: 'GET',
-      userId: req.user.id,
+      userToken: req.authToken!,
     });
     const json = await response.json();
     res.status(response.status).json(json);
@@ -32,7 +32,7 @@ router.post('/select', verifyToken, async (req: AuthRequest, res: Response) => {
   try {
     const response = await agentServiceFetch('/internal/models/select', {
       method: 'POST',
-      userId: req.user.id,
+      userToken: req.authToken!,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req.body ?? {}),
     });
