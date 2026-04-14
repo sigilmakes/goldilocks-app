@@ -18,6 +18,8 @@ import { runMigrations, closeDb } from '@goldilocks/data';
 import { setupWebSocket } from './agent/websocket.js';
 import { sessionManager } from '@goldilocks/runtime';
 
+CONFIG.validateRequiredSecrets();
+
 // Create app and HTTP server
 export const app = createApp();
 const server = createServer(app);

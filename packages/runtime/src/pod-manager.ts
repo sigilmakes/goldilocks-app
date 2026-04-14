@@ -109,6 +109,10 @@ export class PodManager {
   private ensuring = new Map<string, Promise<string>>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
 
+  getUserHomeHostPath(userId: string): string {
+    return resolve(HOMES_HOST_PATH, userId);
+  }
+
   constructor() {
     // Check for idle pods every 60s
     this.idleTimer = setInterval(() => this.evictIdle(), 60_000);
@@ -475,7 +479,7 @@ export class PodManager {
           {
             name: 'home',
             hostPath: {
-              path: `${HOMES_HOST_PATH}/${userId}`,
+              path: this.getUserHomeHostPath(userId),
               type: 'DirectoryOrCreate',
             },
           },

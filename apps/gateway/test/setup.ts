@@ -22,6 +22,7 @@ process.env.DATA_DIR = testDataDir;
 process.env.WORKSPACE_ROOT = workspaceRoot;
 process.env.JWT_SECRET = 'test-jwt-not-for-prod';
 process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
+process.env.AGENT_SERVICE_SHARED_SECRET = 'test-agent-shared-secret';
 process.env.NODE_ENV = 'test';
 
 afterAll(() => {

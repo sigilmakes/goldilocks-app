@@ -71,6 +71,7 @@ mkdir -p "$DATA_DIR" "$WORKSPACE_ROOT"
 export PORT DATA_DIR WORKSPACE_ROOT
 export JWT_SECRET='test-secret-for-smoke-test'
 export ENCRYPTION_KEY='test-encryption-key-32bytes!!'
+export AGENT_SERVICE_SHARED_SECRET='test-agent-shared-secret'
 export NODE_ENV='test'
 export K8S_NAMESPACE='smoke-test'  # prevents real k8s lookups
 

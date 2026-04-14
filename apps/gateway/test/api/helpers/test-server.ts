@@ -237,11 +237,18 @@ async function createTestServer(): Promise<TestServer> {
   process.env.WORKSPACE_ROOT = workspaceRoot;
   process.env.JWT_SECRET = 'test-jwt-not-for-prod';
   process.env.ENCRYPTION_KEY = 'test-encryption-key-32bytes!!';
+  process.env.AGENT_SERVICE_SHARED_SECRET = 'test-agent-shared-secret';
   process.env.NODE_ENV = 'test';
 
   const { sessionManager } = await import('@goldilocks/runtime');
 
   const stubPodManager = {
+    getUserHomeHostPath(userId: string) {
+      const base = userDir(workspaceRoot, userId);
+      mkdirSync(base, { recursive: true });
+      return base;
+    },
+
     async ensurePod(_userId: string) { /* no-op */ },
 
     async execInPod(userId: string, command: string[]) {
