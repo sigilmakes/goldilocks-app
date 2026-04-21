@@ -47,4 +47,6 @@ To regenerate it:
 tilt trigger headlamp-token
 ```
 
+The dev token is short-lived. If Headlamp has been idle for a while and suddenly cannot talk to the cluster, the usual culprit is an expired dev login token. In that case, trigger the `headlamp-token` resource in Tilt (or run the command above), copy the refreshed token, and log back in. A full `tilt down` / `tilt up` restart should not be necessary.
+
 This directory is intentionally minimal for v1: upstream Headlamp, minimal runtime RBAC, a broad dev login token for local ops, no plugins, no wrapper UI.

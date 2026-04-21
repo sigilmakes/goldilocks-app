@@ -110,11 +110,15 @@ Tilt port-forwards Headlamp to `http://localhost:8080` and generates a dev login
 cat "${GOLDILOCKS_STATE_DIR:-$PWD/.dev}/headlamp/headlamp-token.txt"
 ```
 
-If the token expires or the file is missing, regenerate it through Tilt:
+That dev token is short-lived. After the dashboard sits idle for a while, Headlamp can lose cluster access and logging back in with the old token will fail because the token itself has expired. You do **not** need to restart Tilt for this.
+
+Regenerate the token by triggering the `headlamp-token` resource in the Tilt UI, or from the shell:
 
 ```bash
 tilt trigger headlamp-token
 ```
+
+Then copy the fresh token from the file above and log back into Headlamp.
 
 Headlamp runs in-cluster with a dedicated `headlamp` runtime service account, but the Tilt-generated login token comes from a separate `headlamp-admin` service account bound to `cluster-admin` for local dev.
 
