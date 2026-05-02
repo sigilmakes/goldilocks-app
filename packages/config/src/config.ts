@@ -6,31 +6,31 @@ config();
 const defaultStateDir = resolve(process.cwd(), '.dev');
 const dataDir = process.env.DATA_DIR ?? (process.env.GOLDILOCKS_STATE_DIR ? resolve(process.env.GOLDILOCKS_STATE_DIR) : defaultStateDir);
 
+function requireEnv(name: 'JWT_SECRET' | 'ENCRYPTION_KEY' | 'AGENT_SERVICE_SHARED_SECRET'): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`FATAL: ${name} environment variable is required. Set it before starting the server.`);
+  }
+  return value;
+}
+
 export const CONFIG = {
   port: parseInt(process.env.PORT ?? '3000', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
-  
+
   // Paths
   dataDir,
   workspaceRoot: process.env.WORKSPACE_ROOT ?? resolve(dataDir, 'workspaces'),
-  
+
   // Auth
   get jwtSecret(): string {
-    const secret = process.env.JWT_SECRET;
-    if (!secret && process.env.NODE_ENV === 'production') {
-      throw new Error('JWT_SECRET must be set in production');
-    }
-    return secret ?? 'dev-secret-change-in-production';
+    return requireEnv('JWT_SECRET');
   },
   jwtExpiresIn: '7d',
   get encryptionKey(): string {
-    const key = process.env.ENCRYPTION_KEY;
-    if (!key && process.env.NODE_ENV === 'production') {
-      throw new Error('ENCRYPTION_KEY must be set in production');
-    }
-    return key ?? 'dev-encryption-key-32-bytes!!!';
+    return requireEnv('ENCRYPTION_KEY');
   },
-  
+
   // k8s
   k8sNamespace: process.env.K8S_NAMESPACE ?? 'goldilocks',
   agentImage: process.env.AGENT_IMAGE ?? 'goldilocks-agent:latest',
@@ -38,21 +38,23 @@ export const CONFIG = {
   agentServiceUrl: process.env.AGENT_SERVICE_URL ?? 'http://agent-service:3001',
   agentServiceWsUrl: process.env.AGENT_SERVICE_WS_URL ?? 'ws://agent-service:3001/ws',
   get agentServiceSharedSecret(): string {
-    const secret = process.env.AGENT_SERVICE_SHARED_SECRET;
-    if (!secret && process.env.NODE_ENV === 'production') {
-      throw new Error('AGENT_SERVICE_SHARED_SECRET must be set in production');
-    }
-    return secret ?? 'dev-agent-service-secret';
+    return requireEnv('AGENT_SERVICE_SHARED_SECRET');
+  },
+
+  validateRequiredSecrets(): void {
+    void this.jwtSecret;
+    void this.encryptionKey;
+    void this.agentServiceSharedSecret;
   },
 
   get isDev() {
     return this.nodeEnv === 'development';
   },
-  
+
   get isProd() {
     return this.nodeEnv === 'production';
   },
-  
+
   get dbPath() {
     return resolve(this.dataDir, 'goldilocks.db');
   }

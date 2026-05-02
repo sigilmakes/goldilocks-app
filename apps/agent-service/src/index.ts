@@ -17,6 +17,8 @@ import {
   websocketErrored,
 } from './metrics.js';
 
+CONFIG.validateRequiredSecrets();
+
 interface InternalAuthRequest extends express.Request {
   internalUserId?: string;
 }

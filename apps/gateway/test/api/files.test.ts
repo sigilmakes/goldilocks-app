@@ -37,7 +37,6 @@ describe('Files', () => {
   });
 
   it('searches files by query — only matching files appear', async () => {
-    // Write two files with different names
     await fetch(`${server.baseUrl}/api/files/searchable-foo.txt`, {
       method: 'PUT', headers: authHeaders(user),
       body: JSON.stringify({ content: 'foo content' }),
@@ -53,12 +52,27 @@ describe('Files', () => {
 
     expect(res.status).toBe(200);
     const json = await res.json() as { entries: { name: string; path: string }[] };
-    // Should find only the -foo file, not the -bar file
     const paths = json.entries.map(e => e.path ?? e.name);
     const hasFoo = paths.some(p => p.includes('foo'));
     const hasBar = paths.some(p => p.includes('bar'));
     expect(hasFoo).toBe(true);
     expect(hasBar).toBe(false);
+  });
+
+  it('treats shell metacharacters in search literally', async () => {
+    await fetch(`${server.baseUrl}/api/files/literal-$(whoami).txt`, {
+      method: 'PUT', headers: authHeaders(user),
+      body: JSON.stringify({ content: 'literal search target' }),
+    });
+
+    const res = await fetch(`${server.baseUrl}/api/files?search=$(whoami)`, {
+      headers: { authorization: server.authHeader(user) },
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json() as { entries: { path: string }[] };
+    const paths = json.entries.map((entry) => entry.path);
+    expect(paths).toContain('literal-$(whoami).txt');
   });
 
   // ── PUT /api/files/:path — create file ──────────────────────────────────
@@ -125,6 +139,24 @@ describe('Files', () => {
     expect(json.content).toBe('File content here');
   });
 
+  it('writes shell metacharacters literally via PUT', async () => {
+    const path = `literal-put-${Date.now()}.txt`;
+    const content = '$(whoami); `uname -a` | cat && echo haunted';
+
+    const writeRes = await fetch(`${server.baseUrl}/api/files/${path}`, {
+      method: 'PUT', headers: authHeaders(user),
+      body: JSON.stringify({ content }),
+    });
+    expect(writeRes.status).toBe(200);
+
+    const readRes = await fetch(`${server.baseUrl}/api/files/${path}`, {
+      headers: { authorization: server.authHeader(user) },
+    });
+    expect(readRes.status).toBe(200);
+    const json = await readRes.json() as { content: string };
+    expect(json.content).toBe(content);
+  });
+
   it('returns 404 for a non-existent file', async () => {
     const res = await fetch(`${server.baseUrl}/api/files/nonexistent-file.xyz`, {
       headers: { authorization: server.authHeader(user) },
@@ -176,6 +208,24 @@ describe('Files', () => {
     expect(json.ok).toBe(true);
     expect(json.name).toBe('uploaded.txt');
     expect(json.size).toBe(content.length);
+  });
+
+  it('uploads shell metacharacters literally', async () => {
+    const filename = 'uploaded-literal.txt';
+    const content = '$(whoami) ; `pwd` | cat';
+
+    const uploadRes = await fetch(`${server.baseUrl}/api/files/upload`, {
+      method: 'POST', headers: authHeaders(user),
+      body: JSON.stringify({ filename, content: Buffer.from(content).toString('base64') }),
+    });
+    expect(uploadRes.status).toBe(201);
+
+    const readRes = await fetch(`${server.baseUrl}/api/files/${filename}`, {
+      headers: { authorization: server.authHeader(user) },
+    });
+    expect(readRes.status).toBe(200);
+    const json = await readRes.json() as { content: string };
+    expect(json.content).toBe(content);
   });
 
   it('rejects upload without filename', async () => {
