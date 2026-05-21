@@ -17,7 +17,7 @@ describe('agent-service internal auth', () => {
   });
 
   it('accepts internal HTTP requests with the shared secret and a verified JWT', () => {
-    const token = generateToken({ id: 'user-1', email: 'user@example.com' });
+    const token = generateToken({ id: 'user-1', email: 'user@example.com', role: 'user' });
     const req = {
       header(name: string) {
         if (name === 'x-goldilocks-shared-secret') {
@@ -49,7 +49,7 @@ describe('agent-service internal auth', () => {
   });
 
   it('authenticates gateway websocket messages using the shared secret and JWT', () => {
-    const token = generateToken({ id: 'user-2', email: 'ws@example.com' });
+    const token = generateToken({ id: 'user-2', email: 'ws@example.com', role: 'user' });
     const auth = authenticateInternalWebSocketMessage({
       gatewayToken: CONFIG.agentServiceSharedSecret,
       userToken: token,
@@ -60,7 +60,7 @@ describe('agent-service internal auth', () => {
   });
 
   it('rejects revoked JWTs on internal websocket auth', () => {
-    const token = generateToken({ id: 'user-3', email: 'revoked@example.com' });
+    const token = generateToken({ id: 'user-3', email: 'revoked@example.com', role: 'user' });
     revokeToken(verifySignedToken(token));
 
     expect(() => authenticateInternalWebSocketMessage({

@@ -45,6 +45,7 @@ interface UserSessionContext {
 interface ApiKeyRow {
   provider: string;
   encrypted_key: string;
+  key_version: number;
 }
 
 interface AgentSessionWithToolOverride {
@@ -321,17 +322,31 @@ class SessionManager {
   private getUserApiKeys(userId: string): ApiKeyRow[] {
     const db = getDb();
     return db.prepare(
-      'SELECT provider, encrypted_key FROM api_keys WHERE user_id = ? ORDER BY provider ASC'
+      'SELECT provider, encrypted_key, key_version FROM api_keys WHERE user_id = ? ORDER BY provider ASC'
     ).all(userId) as ApiKeyRow[];
   }
 
   private syncAuthStorage(authStorage: AuthStorage, rows: ApiKeyRow[], userId: string): void {
+    const db = getDb();
+    const userRow = db.prepare('SELECT key_salt FROM users WHERE id = ?').get(userId) as { key_salt: string | null } | undefined;
+    const keySalt = userRow?.key_salt ?? undefined;
     const providers = new Set<string>();
 
     for (const row of rows) {
       try {
-        authStorage.setRuntimeApiKey(row.provider, decrypt(row.encrypted_key));
+        const { plaintext, reEncrypt } = decrypt(row.encrypted_key, {
+          keyVersion: row.key_version ?? 1,
+          keySalt,
+        });
+        authStorage.setRuntimeApiKey(row.provider, plaintext);
         providers.add(row.provider);
+
+        // Eager rotation: V1 keys auto-upgraded to V2
+        if (reEncrypt) {
+          db.prepare(
+            'UPDATE api_keys SET encrypted_key = ?, key_version = ? WHERE user_id = ? AND provider = ?'
+          ).run(reEncrypt.encrypted, reEncrypt.keyVersion, userId, row.provider);
+        }
       } catch (err) {
         console.error(`Failed to decrypt ${row.provider} key for user ${userId}:`, err);
       }

@@ -4,16 +4,20 @@ import { v4 as uuid } from 'uuid';
 import { getDb } from '@goldilocks/data';
 import { CONFIG } from '@goldilocks/config';
 
+export type UserRole = 'user' | 'admin';
+
 export interface AuthUser {
   id: string;
   email: string;
   jti: string;
+  role: UserRole;
 }
 
 export interface AuthTokenPayload extends JwtPayload {
   id: string;
   email: string;
   jti: string;
+  role: UserRole;
 }
 
 export interface AuthRequest extends Request {
@@ -66,7 +70,8 @@ function assertValidPayload(payload: string | JwtPayload): AuthTokenPayload {
     throw new Error('Invalid token payload');
   }
 
-  if (typeof payload.id !== 'string' || typeof payload.email !== 'string' || typeof payload.jti !== 'string') {
+  if (typeof payload.id !== 'string' || typeof payload.email !== 'string' || typeof payload.jti !== 'string'
+    || (payload.role !== 'user' && payload.role !== 'admin')) {
     throw new Error('Invalid token payload');
   }
 
@@ -135,6 +140,7 @@ export function verifyToken(req: AuthRequest, res: Response, next: NextFunction)
       id: claims.id,
       email: claims.email,
       jti: claims.jti,
+      role: claims.role,
     };
     next();
   } catch {
@@ -142,11 +148,12 @@ export function verifyToken(req: AuthRequest, res: Response, next: NextFunction)
   }
 }
 
-export function generateToken(user: Pick<AuthUser, 'id' | 'email'>): string {
+export function generateToken(user: Pick<AuthUser, 'id' | 'email' | 'role'>): string {
   return jwt.sign(
     {
       id: user.id,
       email: user.email,
+      role: user.role,
       jti: uuid(),
     },
     CONFIG.jwtSecret,
@@ -156,6 +163,19 @@ export function generateToken(user: Pick<AuthUser, 'id' | 'email'>): string {
       audience: CONFIG.jwtAudience,
     }
   );
+}
+
+/**
+ * Require the authenticated user to have the admin role.
+ * Must be used after verifyToken in the middleware chain.
+ */
+export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || req.user.role !== 'admin') {
+    res.status(403).json({ error: 'Admin access required' });
+    return;
+  }
+
+  next();
 }
 
 export function setSessionCookie(res: Response, token: string): void {

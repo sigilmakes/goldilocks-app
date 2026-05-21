@@ -16,6 +16,10 @@ function requireEnv(name: 'JWT_SECRET' | 'ENCRYPTION_KEY' | 'AGENT_SERVICE_SHARE
   return value;
 }
 
+// as const prevents reassignment but preserves getter semantics.
+// Using a direct object literal (no `as const` on the entire object) because
+// `as const` on an object with getters can lose `this` binding in some
+// module bundlers and test runners.
 export const CONFIG = {
   port: parseInt(process.env.PORT ?? '3000', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -85,7 +89,12 @@ export const CONFIG = {
     return this.nodeEnv === 'production';
   },
 
+  get adminEmails(): string[] {
+    if (!process.env.ADMIN_EMAILS) return [];
+    return process.env.ADMIN_EMAILS.split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  },
+
   get dbPath() {
     return resolve(this.dataDir, 'goldilocks.db');
   }
-} as const;
+};

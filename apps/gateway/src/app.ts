@@ -17,9 +17,11 @@ import { fileURLToPath } from 'url';
 
 import { CONFIG } from '@goldilocks/config';
 import { getDb } from '@goldilocks/data';
-import { getRequestToken, verifySignedToken } from './auth/middleware.js';
+import { getRequestToken, requireAdmin, verifySignedToken } from './auth/middleware.js';
+import { audit } from './logging/audit-logger.js';
 import { getRelayMetrics } from './agent/relay-metrics.js';
 import authRoutes from './auth/routes.js';
+import { verifyToken } from './auth/middleware.js';
 import conversationRoutes from './conversations/routes.js';
 import fileRoutes from './files/routes.js';
 import modelRoutes from './models/routes.js';
@@ -167,7 +169,8 @@ export function createApp() {
     }
   });
 
-  app.get('/api/metrics', (_req, res) => {
+  app.get('/api/metrics', verifyToken, requireAdmin, (req, res) => {
+    audit('admin.action', req, { userId: (req as any).user?.id, userAgent: req.headers['user-agent'], details: { action: 'metrics' } });
     res.json({ relay: getRelayMetrics() });
   });
 

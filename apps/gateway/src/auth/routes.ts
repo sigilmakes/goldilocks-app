@@ -10,6 +10,8 @@ import {
   verifyToken,
   AuthRequest,
 } from './middleware.js';
+import { CONFIG } from '@goldilocks/config';
+import { audit, pruneExpiredLockouts } from '../logging/audit-logger.js';
 
 const router = Router();
 
@@ -30,6 +32,7 @@ interface UserRow {
   password_hash: string;
   display_name: string | null;
   settings: string;
+  role: string;
   created_at?: number;
 }
 
@@ -44,12 +47,13 @@ const AUTH_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_FAILURE_THRESHOLD = 5;
 const BASE_LOCKOUT_MS = 15 * 60 * 1000;
 
-function formatUser(row: Pick<UserRow, 'id' | 'email' | 'display_name' | 'settings'> & { created_at?: number }) {
+function formatUser(row: Pick<UserRow, 'id' | 'email' | 'display_name' | 'settings' | 'role'> & { created_at?: number }) {
   return {
     id: row.id,
     email: row.email,
     displayName: row.display_name,
     settings: JSON.parse(row.settings),
+    role: row.role,
     createdAt: row.created_at,
   };
 }
@@ -150,14 +154,17 @@ router.post('/register', async (req: Request<{}, {}, RegisterBody>, res: Respons
 
   const id = uuid();
   const passwordHash = await hashPassword(password);
+  const role = CONFIG.adminEmails.includes(email.toLowerCase()) ? 'admin' : 'user';
 
   db.prepare(`
-    INSERT INTO users (id, email, password_hash, display_name)
-    VALUES (?, ?, ?, ?)
-  `).run(id, email, passwordHash, displayName ?? null);
+    INSERT INTO users (id, email, password_hash, display_name, role)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, email, passwordHash, displayName ?? null, role);
 
-  const token = generateToken({ id, email });
+  const token = generateToken({ id, email, role });
   setSessionCookie(res, token);
+
+  audit('auth.register.success', req, { userId: id, userAgent: req.headers['user-agent'] });
 
   res.status(201).json({
     user: {
@@ -165,6 +172,7 @@ router.post('/register', async (req: Request<{}, {}, RegisterBody>, res: Respons
       email,
       displayName: displayName ?? null,
       settings: {},
+      role,
     },
   });
 });
@@ -186,7 +194,7 @@ router.post('/login', async (req: Request<{}, {}, LoginBody>, res: Response) => 
 
   const db = getDb();
   const row = db.prepare(`
-    SELECT id, email, password_hash, display_name, settings
+    SELECT id, email, password_hash, display_name, settings, role
     FROM users WHERE email = ?
   `).get(email) as UserRow | undefined;
 
@@ -197,6 +205,7 @@ router.post('/login', async (req: Request<{}, {}, LoginBody>, res: Response) => 
       return;
     }
 
+    audit('auth.login.failure', req, { attemptedEmail: email, userAgent: req.headers['user-agent'] });
     res.status(401).json({ error: 'Invalid email or password' });
     return;
   }
@@ -209,14 +218,24 @@ router.post('/login', async (req: Request<{}, {}, LoginBody>, res: Response) => 
       return;
     }
 
+    audit('auth.login.failure', req, { attemptedEmail: email, userAgent: req.headers['user-agent'] });
     res.status(401).json({ error: 'Invalid email or password' });
     return;
   }
 
   clearFailedAuthAttempts(email);
+  pruneExpiredLockouts(db);
 
-  const token = generateToken({ id: row.id, email: row.email });
+  // Auto-promote if email is in ADMIN_EMAILS and role hasn't been updated yet
+  const effectiveRole = (row.role === 'user' && CONFIG.adminEmails.includes(row.email.toLowerCase())) ? 'admin' : (row.role as 'user' | 'admin');
+  if (effectiveRole !== row.role) {
+    getDb().prepare('UPDATE users SET role = ? WHERE id = ?').run(effectiveRole, row.id);
+  }
+
+  const token = generateToken({ id: row.id, email: row.email, role: effectiveRole });
   setSessionCookie(res, token);
+
+  audit('auth.login.success', req, { userId: row.id, userAgent: req.headers['user-agent'] });
 
   res.json({
     user: formatUser(row),
@@ -244,6 +263,7 @@ router.post('/logout', verifyToken, (req: AuthRequest, res: Response) => {
 
   revokeToken({ jti: req.authClaims.jti, exp: req.authClaims.exp! });
   clearSessionCookie(res);
+  audit('auth.logout', req, { userId: req.user.id, userAgent: req.headers['user-agent'] });
   res.json({ ok: true });
 });
 
@@ -256,7 +276,7 @@ router.get('/me', verifyToken, (req: AuthRequest, res: Response) => {
 
   const db = getDb();
   const row = db.prepare(`
-    SELECT id, email, display_name, settings, created_at
+    SELECT id, email, display_name, settings, created_at, role
     FROM users WHERE id = ?
   `).get(req.user.id) as UserRow | undefined;
 

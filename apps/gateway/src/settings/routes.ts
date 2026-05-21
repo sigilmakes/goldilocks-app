@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
 import { getDb } from '@goldilocks/data';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
-import { encrypt } from '@goldilocks/config';
+import { encrypt, decrypt, generateKeySalt } from '@goldilocks/config';
 import { getProviders, getModels } from '@mariozechner/pi-ai';
+import { audit } from '../logging/audit-logger.js';
 
 const router = Router();
 
@@ -289,6 +290,7 @@ router.patch('/', (req: AuthRequest, res: Response) => {
       req.user.id,
     );
 
+    audit('settings.update', req, { userId: req.user.id, userAgent: req.headers['user-agent'], details: { keys: Object.keys(normalizedPatch) } });
     res.json({ settings: merged });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid settings payload' });
@@ -340,15 +342,25 @@ router.put('/api-key', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const encryptedKey = encrypt(key);
+  const db = getDb();
+
+  // Ensure user has a key_salt for per-user key derivation
+  let keySalt = (db.prepare('SELECT key_salt FROM users WHERE id = ?').get(req.user.id) as { key_salt: string | null } | undefined)?.key_salt;
+  if (!keySalt) {
+    keySalt = generateKeySalt();
+    db.prepare('UPDATE users SET key_salt = ? WHERE id = ?').run(keySalt, req.user.id);
+  }
+
+  const { encrypted, keyVersion } = encrypt(key, keySalt);
   const now = Date.now();
 
-  const db = getDb();
   db.prepare(
-    `INSERT INTO api_keys (user_id, provider, encrypted_key, created_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id, provider) DO UPDATE SET encrypted_key = excluded.encrypted_key, created_at = excluded.created_at`,
-  ).run(req.user.id, provider, encryptedKey, now);
+    `INSERT INTO api_keys (user_id, provider, encrypted_key, key_version, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, provider) DO UPDATE SET encrypted_key = excluded.encrypted_key, key_version = excluded.key_version, created_at = excluded.created_at`,
+  ).run(req.user.id, provider, encrypted, keyVersion, now);
+
+  audit('settings.api-key.store', req, { userId: req.user.id, userAgent: req.headers['user-agent'], details: { provider } });
 
   res.json({ ok: true, provider, createdAt: now });
 });
@@ -379,6 +391,7 @@ router.delete('/api-key/:provider', (req: AuthRequest, res: Response) => {
     return;
   }
 
+  audit('settings.api-key.delete', req, { userId: req.user.id, userAgent: req.headers['user-agent'], details: { provider } });
   res.json({ ok: true });
 });
 

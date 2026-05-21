@@ -31,7 +31,7 @@ describe('gateway websocket upgrade auth', () => {
   });
 
   it('accepts upgrade requests from the allowed origin with a valid session cookie', () => {
-    const token = generateToken({ id: 'user-1', email: 'user@example.com' });
+    const token = generateToken({ id: 'user-1', email: 'user@example.com', role: 'user' });
     const req = makeUpgradeRequest({
       cookie: `${CONFIG.sessionCookieName}=${encodeURIComponent(token)}`,
     });
@@ -44,7 +44,7 @@ describe('gateway websocket upgrade auth', () => {
   });
 
   it('rejects websocket upgrades from disallowed origins', () => {
-    const token = generateToken({ id: 'user-1', email: 'user@example.com' });
+    const token = generateToken({ id: 'user-1', email: 'user@example.com', role: 'user' });
     const req = makeUpgradeRequest({
       origin: 'https://evil.example',
       cookie: `${CONFIG.sessionCookieName}=${encodeURIComponent(token)}`,
@@ -68,7 +68,7 @@ describe('gateway websocket upgrade auth', () => {
   });
 
   it('rejects revoked websocket tokens', () => {
-    const token = generateToken({ id: 'user-2', email: 'revoked@example.com' });
+    const token = generateToken({ id: 'user-2', email: 'revoked@example.com', role: 'user' });
     const claims = verifySignedToken(token);
     revokeToken(claims);
 

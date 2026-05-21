@@ -76,6 +76,8 @@ vi.mock('@goldilocks/data', () => ({
   getDb: () => ({
     prepare: () => ({
       all: () => [],
+      get: () => undefined,
+      run: () => ({ changes: 0 }),
     }),
   }),
 }));
@@ -83,6 +85,8 @@ vi.mock('@goldilocks/data', () => ({
 vi.mock('@goldilocks/config', () => ({
   CONFIG: { dataDir: '/tmp/goldilocks-test' },
   decrypt: (value: string) => value,
+  encrypt: (value: string, _salt: string) => ({ encrypted: value, keyVersion: 2 }),
+  generateKeySalt: () => 'a'.repeat(64),
 }));
 vi.mock('../src/pod-manager.js', () => ({
   PodManager: class PodManager {
