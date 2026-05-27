@@ -16,7 +16,7 @@
     "@goldilocks/contracts": "file:../../packages/contracts",
     "@goldilocks/data": "file:../../packages/data",
     "@goldilocks/runtime": "file:../../packages/runtime",
-    "@mariozechner/pi-ai": "^0.64.0",
+    "@earendil-works/pi-ai": "^0.75.5",
     "bcrypt": "^5.1.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

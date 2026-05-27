@@ -51,7 +51,7 @@ const createPodToolOperationsMock = vi.fn(() => ({
   write: { transport: 'write' },
 }));
 
-vi.mock('@mariozechner/pi-coding-agent', () => {
+vi.mock('@earendil-works/pi-coding-agent', () => {
   return {
     AuthStorage: {
       inMemory: () => ({ setRuntimeApiKey: vi.fn(), removeRuntimeApiKey: vi.fn(), list: () => [] }),

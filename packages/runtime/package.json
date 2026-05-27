@@ -20,8 +20,8 @@
     "@goldilocks/config": "file:../config",
     "@goldilocks/data": "file:../data",
     "@kubernetes/client-node": "^1.4.0",
-    "@mariozechner/pi-agent-core": "^0.64.0",
-    "@mariozechner/pi-coding-agent": "^0.64.0",
+    "@earendil-works/pi-agent-core": "^0.75.5",
+    "@earendil-works/pi-coding-agent": "^0.75.5",
     "ws": "^8.18.2"
   },
   "devDependencies": {

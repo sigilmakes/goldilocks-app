@@ -1,16 +1,16 @@
 import {
   AuthStorage,
   createAgentSession,
-  createBashTool,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
+  defineTool,
   getAgentDir,
   ModelRegistry,
   SessionManager as PiSessionManager,
   type AgentSession,
-} from '@mariozechner/pi-coding-agent';
-import type { AgentTool } from '@mariozechner/pi-agent-core';
+} from '@earendil-works/pi-coding-agent';
 import { resolve } from 'path';
 import { getDb } from '@goldilocks/data';
 import { decrypt } from '@goldilocks/config';
@@ -46,11 +46,6 @@ interface ApiKeyRow {
   provider: string;
   encrypted_key: string;
   key_version: number;
-}
-
-interface AgentSessionWithToolOverride {
-  _baseToolsOverride?: Record<string, AgentTool<any>>;
-  _buildRuntime?: (options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }) => void;
 }
 
 class SessionManager {
@@ -245,12 +240,12 @@ class SessionManager {
       ? PiSessionManager.open(resolve(requestedSessionPath), sessionDir)
       : PiSessionManager.create(getRemoteWorkspaceCwd(), sessionDir);
 
-    const baseTools = {
-      read: createReadTool(getRemoteWorkspaceCwd(), { operations: operations.read }),
-      bash: createBashTool(getRemoteWorkspaceCwd(), { operations: operations.bash }),
-      edit: createEditTool(getRemoteWorkspaceCwd(), { operations: operations.edit }),
-      write: createWriteTool(getRemoteWorkspaceCwd(), { operations: operations.write }),
-    };
+    const baseToolDefinitions = [
+      defineTool(createReadToolDefinition(getRemoteWorkspaceCwd(), { operations: operations.read })),
+      defineTool(createBashToolDefinition(getRemoteWorkspaceCwd(), { operations: operations.bash })),
+      defineTool(createEditToolDefinition(getRemoteWorkspaceCwd(), { operations: operations.edit })),
+      defineTool(createWriteToolDefinition(getRemoteWorkspaceCwd(), { operations: operations.write })),
+    ];
     const activeToolNames = ['read', 'bash', 'edit', 'write'] as const;
 
     const { session } = await createAgentSession({
@@ -259,18 +254,9 @@ class SessionManager {
       authStorage,
       modelRegistry,
       sessionManager,
-      tools: activeToolNames.map((name) => baseTools[name]),
-    });
-
-    // pi SDK 0.64.0 only uses options.tools to pick active tool names; it still
-    // builds the default local tool runtime internally. Force the runtime to use
-    // our pod-backed tools instead, then rebuild the runtime so all executions go
-    // through k8s exec against the user's sandbox pod.
-    const sessionWithOverride = session as unknown as AgentSessionWithToolOverride;
-    sessionWithOverride._baseToolsOverride = baseTools;
-    sessionWithOverride._buildRuntime?.({
-      activeToolNames: [...activeToolNames],
-      includeAllExtensionTools: true,
+      noTools: 'builtin',
+      tools: [...activeToolNames],
+      customTools: baseToolDefinitions,
     });
 
     const context: UserSessionContext = {

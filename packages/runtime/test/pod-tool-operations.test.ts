@@ -1,6 +1,6 @@
 import { PassThrough } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
-import { createEditTool, createWriteTool } from '@mariozechner/pi-coding-agent';
+import { createEditTool, createWriteTool } from '@earendil-works/pi-coding-agent';
 import { createPodToolOperations } from '../src/pod-tool-operations';
 
 interface ExecStep {

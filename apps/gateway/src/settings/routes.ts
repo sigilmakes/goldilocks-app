@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { getDb } from '@goldilocks/data';
 import { verifyToken, AuthRequest } from '../auth/middleware.js';
 import { encrypt, decrypt, generateKeySalt } from '@goldilocks/config';
-import { getProviders, getModels } from '@mariozechner/pi-ai';
+import { getProviders, getModels } from '@earendil-works/pi-ai';
 import { audit } from '../logging/audit-logger.js';
 
 const router = Router();
